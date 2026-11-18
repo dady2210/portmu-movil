@@ -42,6 +42,8 @@
   body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: calc(44px * var(--hc-u,1)) !important; }
   body.hc-on .mobile-pvp-button { opacity: 0 !important; pointer-events: none !important; position: fixed !important; width: 1px !important; height: 1px !important; left: 0 !important; top: 0 !important; }
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
+  body.hc-under .hc-skill, body.hc-under #hc-pvp, body.hc-under #hc-mon, body.hc-under #hc-cfg, body.hc-under #hc-atkicon,
+  body.hc-on.hc-under .mobile-attack-button, body.hc-on.hc-under .mobile-skill-slot, body.hc-on.hc-under .mobile-potion-button, body.hc-on.hc-under .mobile-pickup-button { visibility: hidden !important; }
   body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
   .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
     background: radial-gradient(#281e14e6,#000d); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; cursor: pointer; }
@@ -318,16 +320,32 @@
   }
   const setCls = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
 
+  // Ventanas del juego (inventario, bóveda, tiendas, party...): si alguna cubre la zona del HUD, el HUD se esconde para no tapar la ventana
+  const WIN_SEL = '.window-title, .mp-window, .party-window, .guild-window, .quest-window, .skill-list-window, .event-window, .kanturu-window, .messenger-window, .chat-room-window, .pet-info-window, .mu-helper-window, .instrument-window, .session-window, .commands-window, .news-window, .gm-window, .options-window, .mobile-events-panel, .msg-window, .guild-dialog-layer, .quest-prompt-layer, .balgass-entry-layer, .duel-prompt-layer, .cash-confirm-layer, .player-market, .ranking-window';
+  const hits = (r, b) => r.right > b.l && r.left < b.r && r.bottom > b.t && r.top < b.b;
+  function windowOverHud(cx, cy) {
+    const reach = CFG.POWER_RADIUS + CFG.POWER * 1.5;
+    const boxes = [{ l: cx - reach, r: innerWidth, t: cy - reach, b: innerHeight }, { l: innerWidth / 2 - 2 * (CFG.UTIL + 8), r: innerWidth / 2 + 2 * (CFG.UTIL + 8), t: innerHeight - CFG.MARGIN - CFG.UTIL - 4, b: innerHeight }];
+    for (const e of $(WIN_SEL)) {
+      if (e.closest('#hc-panel,.mobile-skill-picker,.chat-window')) continue;
+      const r = e.getBoundingClientRect(); if (r.width < 4 || r.height < 4) continue;
+      const st = getComputedStyle(e); if (st.visibility === 'hidden' || st.display === 'none') continue;
+      if (boxes.some(b => hits(r, b))) { window.__hcUnder = e.className || e.tagName; return true; }
+    }
+    window.__hcUnder = null; return false;
+  }
+
   function layout() {
     const show = on && mobileOn();
     setCls(document.body, 'hc-on', show);
     syncAlt();
     const disp = show ? 'flex' : 'none';
     if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
-    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.body, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
     const U = unit(); for (const k in BASE) CFG[k] = BASE[k] * U;
     document.documentElement.style.setProperty('--hc-u', U.toFixed(3));
     const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
+    setCls(document.body, 'hc-under', windowOverHud(cx, cy));
     const atk = $('.mobile-attack-button'); if (atk) place(atk, cx, cy, CFG.ATTACK);
     // si el básico tiene un poder asignado, el botón grande muestra su icono
     const bs = harvestOk && cfg().basic ? skillByTitle(cfg().basic) : null;
