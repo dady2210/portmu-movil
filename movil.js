@@ -328,9 +328,12 @@
     const boxes = [{ l: cx - reach, r: innerWidth, t: cy - reach, b: innerHeight }, { l: innerWidth / 2 - 2 * (CFG.UTIL + 8), r: innerWidth / 2 + 2 * (CFG.UTIL + 8), t: innerHeight - CFG.MARGIN - CFG.UTIL - 4, b: innerHeight }];
     for (const e of $(WIN_SEL)) {
       if (e.closest('#hc-panel,.mobile-skill-picker,.chat-window')) continue;
-      const r = e.getBoundingClientRect(); if (r.width < 4 || r.height < 4) continue;
-      const st = getComputedStyle(e); if (st.visibility === 'hidden' || st.display === 'none') continue;
-      if (boxes.some(b => hits(r, b))) { window.__hcUnder = e.className || e.tagName; return true; }
+      // el título (.window-title) es solo la barra de arriba: la ventana es su contenedor
+      const box = e.matches('.window-title') && e.parentElement ? e.parentElement : e;
+      const r = box.getBoundingClientRect(); if (r.width < 4 || r.height < 4) continue;
+      if (r.width > innerWidth * 0.9 && r.height > innerHeight * 0.9) continue;   // capa de pantalla completa, no una ventana
+      const st = getComputedStyle(box); if (st.visibility === 'hidden' || st.display === 'none') continue;
+      if (boxes.some(b => hits(r, b))) { window.__hcUnder = (box.className || box.tagName) + ' ' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height); return true; }
     }
     window.__hcUnder = null; return false;
   }
