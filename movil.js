@@ -42,6 +42,7 @@
   body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: calc(44px * var(--hc-u,1)) !important; }
   body.hc-on .mobile-pvp-button { opacity: 0 !important; pointer-events: none !important; position: fixed !important; width: 1px !important; height: 1px !important; left: 0 !important; top: 0 !important; }
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
+  body.hc-on .quick-command-window { transform: scale(calc(1.6 * var(--hc-u,1))) !important; transform-origin: 0 0 !important; }
   /* los botones del HUD cuelgan de <html>, no de <body>: la clase hc-under va en <html> */
   html.hc-under .hc-skill, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-atkicon,
   html.hc-under body.hc-on .mobile-attack-button, html.hc-under body.hc-on .mobile-skill-slot, html.hc-under body.hc-on .mobile-potion-button, html.hc-under body.hc-on .mobile-pickup-button { visibility: hidden !important; }
@@ -442,6 +443,42 @@
     }
   }
   setInterval(deoverlap, 120);
+
+  // ---- mantener pulsado sobre un personaje: abre el menú rápido del propio juego (Trade, Compra, Party, Susurro, Seguir, Duelo, Atacar) ----
+  // El juego ya lo abre con clic derecho (o Alt/Mayús) sobre un jugador. Aquí se repite ese clic derecho en el punto pulsado; el menú, los nombres
+  // y las acciones son los del cliente. Con PvP encendido el juego trata el toque como ataque y no abre el menú.
+  const LP_MS = 550, LP_MOVE = 10;
+  let lp = null, swallowUp = false;
+  const clearLp = () => { if (lp) { clearTimeout(lp.timer); lp = null; } };
+  const quickEl = () => $('.quick-command-window');
+  async function openQuickAt(x, y, cv) {
+    const mk = (t, btn, btns) => new PointerEvent(t, { bubbles: true, cancelable: true, composed: true, pointerId: 1, pointerType: 'mouse', isPrimary: true, button: btn, buttons: btns, clientX: x, clientY: y, altKey: true });
+    swallowUp = true;
+    noCapture(() => cv.dispatchEvent(mk('pointermove', -1, 0)));       // el juego elige el objetivo con el último movimiento
+    await sleep(90);
+    noCapture(() => { cv.dispatchEvent(mk('pointerdown', 2, 2)); cv.dispatchEvent(mk('pointerup', 2, 0)); });
+    await sleep(220);
+    const q = quickEl();
+    if (!q) { swallowUp = false; return; }                           // no había ningún jugador bajo el dedo
+    // el menú es pequeño: se agranda según la pantalla y se mantiene dentro de ella
+    await sleep(40);
+    const r = q.getBoundingClientRect();
+    const left = Math.max(4, Math.min(innerWidth - r.width - 4, r.left)), top = Math.max(4, Math.min(innerHeight - r.height - 4, r.top));
+    q.style.left = Math.round(left) + 'px'; q.style.top = Math.round(top) + 'px';
+  }
+  document.addEventListener('pointerdown', (e) => {
+    if (!on || !e.isTrusted || e.button !== 0 || !mobileOn()) return;
+    const cv = e.target;
+    if (!cv || cv.tagName !== 'CANVAS' || document.documentElement.classList.contains('hc-under')) return;
+    if (!cv.__hcLp) {   // el siguiente pointerup real (al soltar el dedo) no debe cerrar el menú que se acaba de abrir
+      cv.__hcLp = true;
+      cv.addEventListener('pointerup', (ev) => { if (swallowUp && ev.isTrusted) { swallowUp = false; ev.stopPropagation(); } });
+    }
+    clearLp(); const x = e.clientX, y = e.clientY;
+    lp = { id: e.pointerId, x, y, timer: setTimeout(() => { lp = null; openQuickAt(x, y, cv); }, LP_MS) };
+  }, true);
+  document.addEventListener('pointermove', (e) => { if (lp && e.pointerId === lp.id && Math.hypot(e.clientX - lp.x, e.clientY - lp.y) > LP_MOVE) clearLp(); }, true);
+  ['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, (e) => { if (lp && e.pointerId === lp.id) clearLp(); }, true));
 
   info.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); harvest(); });
 
