@@ -1,167 +1,409 @@
-(function(){try{(function (root) {
-'use strict';
-const CFG = {
-FINGER_RADIUS: 24,        // px: tolerancia del toque (un ratón tiene precisión de 1 px; la yema del dedo cubre ~40 px)
-REPEAT_AFTER_MS: 220,     // se empieza a repetir si sigues pulsando (el cliente abre el selector de poderes a los 400 ms)
-REPEAT_EVERY_MS: 250,     // mismo ritmo que el botón de ataque oficial del cliente móvil
-PILE_MAX: 5               // ítems que se listan al mantener pulsado sobre un montón
-};
-function distToRect(p, r) {
-const dx = Math.max(r.left - p.x, 0, p.x - r.right), dy = Math.max(r.top - p.y, 0, p.y - r.bottom);
-return Math.hypot(dx, dy);
-}
-const center = (r) => ({ x: (r.left + r.right) / 2, y: (r.top + r.bottom) / 2 });
-function labelsNear(p, rects, radius = CFG.FINGER_RADIUS) {
-const out = [];
-rects.forEach((r, i) => {
-if (!r) return;
-const d = distToRect(p, r);
-if (d <= radius) { const c = center(r); out.push({ i, d, dc: Math.hypot(c.x - p.x, c.y - p.y) }); }
-});
-out.sort((a, b) => a.d - b.d || a.dc - b.dc || a.i - b.i);
-return out.map(o => o.i);
-}
-function pickLabel(p, rects, radius = CFG.FINGER_RADIUS) {
-const l = labelsNear(p, rects, radius);
-return l.length ? l[0] : -1;
-}
-const needsTarget = ({ pvpOn, hasTarget }) => !pvpOn && !hasTarget;
-function repeatDue({ held, now, last }) {
-if (held < CFG.REPEAT_AFTER_MS) return false;
-return !last || now - last >= CFG.REPEAT_EVERY_MS;
-}
-root.__mmLogic = { CFG, distToRect, labelsNear, pickLabel, needsTarget, repeatDue };
-})(typeof window !== 'undefined' ? window : globalThis);
+(function(){try{
+// HUD circular del modo móvil (v0.2). Se ejecuta en el mundo de la página (MAIN) para poder tocar los botones del cliente como lo haría un dedo.
+// No inventa acciones: el ataque básico es el botón ORIGINAL movido de sitio; cada poder es un botón circular que, al tocarlo o mantenerlo,
+// "toca" la ranura original del cliente (que aplica cooldown, maná y alcance); PvP/Monstruos tocan el botón PvP original.
 (function () {
-'use strict';
-const L = window.__mmLogic;
-if (window.__mm && window.__mm.toggle) { window.__mm.toggle(); return; }      // marcador: ejecutarlo otra vez lo apaga/enciende
-if (!L || window.__mmLoaded) return;
-window.__mmLoaded = true;
-const KEY = 'portmu_movil';
-const defaults = { repeat: true, tol: true, labels: true };
-let st = { ...defaults };
-try { st = { ...defaults, ...(JSON.parse(localStorage.getItem(KEY) || '{}')) }; } catch (e) { /* sin almacenamiento */ }
-let enabled = true;
-const save = () => { try { localStorage.setItem(KEY, JSON.stringify(st)); } catch (e) { /* nada */ } };
-const $ = (s, r = document) => r.querySelector(s);
-const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
-const mobileOn = () => !!$('.mobile-controls');
-const css = document.createElement('style');
-css.textContent = `
-#mm-panel{position:fixed;right:8px;top:132px;z-index:99990;display:none;flex-direction:column;gap:6px;touch-action:manipulation}
-#mm-panel button{all:unset;box-sizing:border-box;width:48px;height:48px;overflow:hidden;flex-direction:column;border-radius:50%;background:rgba(20,16,12,.72);border:1px solid rgba(230,190,90,.55);color:#e6be5a;font:600 12px/1 'Segoe UI',sans-serif;text-align:center;display:flex;align-items:center;justify-content:center;cursor:pointer;user-select:none}
-#mm-panel button.on{background:rgba(230,190,90,.9);color:#1b140c}
-#mm-panel small{display:block;font-size:9px;line-height:11px;margin-top:2px;opacity:.9;white-space:nowrap}
-body.mm-labels .world-objects .drop{font-size:13px !important;padding:3px 6px !important;text-shadow:0 0 3px #000,0 0 3px #000;border-radius:3px;background:rgba(0,0,0,.35)}
-#mm-pile{position:fixed;z-index:99995;background:rgba(18,14,10,.94);border:1px solid rgba(230,190,90,.7);border-radius:8px;padding:4px;display:flex;flex-direction:column;gap:3px;min-width:140px}
-#mm-pile button{all:unset;box-sizing:border-box;padding:9px 10px;border-radius:5px;background:rgba(255,255,255,.07);font:600 14px 'Segoe UI',sans-serif;color:#fff;cursor:pointer}
-`;
-document.documentElement.appendChild(css);
-const panel = document.createElement('div');
-panel.id = 'mm-panel';
-const mkBtn = (id, html, title) => { const b = document.createElement('button'); b.id = id; b.type = 'button'; b.title = title; b.innerHTML = html; panel.appendChild(b); return b; };
-const bLoot = mkBtn('mm-loot', '👁<small>Botín</small>', 'Botín: como mantener Alt en PC (nombres de todos los ítems del suelo; el toque prefiere ítems). Toca para activar/desactivar.');
-const bRep = mkBtn('mm-rep', '🔁<small>Repetir</small>', 'Mantener un poder lo repite (como el botón derecho mantenido en PC)');
-const bTol = mkBtn('mm-tol', '🎯<small>Dedo</small>', 'El toque elige el ítem más cercano al dedo (hasta 24 px)');
-document.documentElement.appendChild(panel);
-const paint = () => {
-bRep.classList.toggle('on', !!st.repeat); bTol.classList.toggle('on', !!st.tol);
-bLoot.classList.toggle('on', altDown);
-document.body && document.body.classList.toggle('mm-labels', !!st.labels);
-};
-let altDown = false;
-const altEvent = (type) => new KeyboardEvent(type, { code: 'AltLeft', key: 'Alt', keyCode: 18, which: 18, altKey: type === 'keydown', bubbles: true, cancelable: true });
-function setAlt(on) {
-if (on === altDown) return;
-altDown = on;
-document.dispatchEvent(altEvent(on ? 'keydown' : 'keyup'));
-paint();
-}
-bLoot.addEventListener('click', (e) => { e.stopPropagation(); setAlt(!altDown); });
-bLoot.addEventListener('pointerdown', (e) => e.stopPropagation());
-const synth = (el, type, pointerId, extra = {}) => {
-const r = el.getBoundingClientRect();
-el.dispatchEvent(new PointerEvent(type, { bubbles: true, cancelable: true, composed: true, pointerId, pointerType: 'touch', isPrimary: true, button: 0, buttons: type === 'pointerup' ? 0 : 1,
-clientX: r.left + r.width / 2, clientY: r.top + r.height / 2, ...extra }));
-};
-const tap = (el, pointerId) => { synth(el, 'pointerdown', pointerId); synth(el, 'pointerup', pointerId); };
-const hasTarget = () => !!$('.mobile-target-label');
-const pvpOn = () => !!$('.mobile-pvp-button.on');
-let hold = null;     // { el, pid, t0, last, timer }
-function stopHold() { if (hold) { clearInterval(hold.timer); hold = null; } }
-function tick() {
-if (!hold) return;
-if (!document.contains(hold.el) || document.hidden) return stopHold();
-const now = Date.now();
-if (!L.repeatDue({ held: now - hold.t0, now, last: hold.last })) return;
-hold.last = now;
-if (L.needsTarget({ pvpOn: pvpOn(), hasTarget: hasTarget() })) {
-const k = (type) => document.dispatchEvent(new KeyboardEvent(type, { code: 'KeyN', key: 'n', keyCode: 78, which: 78, bubbles: true, cancelable: true }));
-k('keydown'); k('keyup');
-}
-tap(hold.el, hold.pid);                           // un toque normal sobre la ranura: lanza el poder seleccionado (el juego aplica cooldown, maná y alcance)
-}
-document.addEventListener('pointerdown', (e) => {
-if (!enabled || !e.isTrusted || !st.repeat || !mobileOn()) return;
-const slot = e.target && e.target.closest && e.target.closest('.mobile-skill-slot');
-if (!slot || !$('.mobile-skill-art', slot)) return;       // ranura vacía: se deja el comportamiento normal (abrir el selector)
-stopHold();
-hold = { el: slot, pid: e.pointerId, t0: Date.now(), last: 0, timer: setInterval(tick, 50) };
-}, true);
-const release = (e) => { if (e.isTrusted && hold && e.pointerId === hold.pid) stopHold(); };
-document.addEventListener('pointerup', release, true);
-document.addEventListener('pointercancel', release, true);
-window.addEventListener('blur', stopHold);
-const labels = () => $$('.world-objects .drop');
-const rectOf = (el) => { const r = el.getBoundingClientRect(); return r.width && r.height ? { left: r.left, top: r.top, right: r.right, bottom: r.bottom } : null; };
-let pileTimer = null, pileStart = null;
-const closePile = () => { const p = $('#mm-pile'); if (p) p.remove(); };
-function openPile(p, els) {
-closePile();
-const box = document.createElement('div'); box.id = 'mm-pile';
-els.slice(0, L.CFG.PILE_MAX).forEach((el) => {
-const b = document.createElement('button'); b.type = 'button';
-b.textContent = (el.textContent || 'ítem').trim(); b.style.color = getComputedStyle(el).color;
-b.addEventListener('pointerdown', (ev) => { ev.stopPropagation(); });
-b.addEventListener('click', (ev) => { ev.stopPropagation(); closePile(); synth(el, 'pointerdown', 7001); synth(el, 'pointerup', 7001); });
-box.appendChild(b);
-});
-box.style.left = Math.max(4, Math.min(innerWidth - 160, p.x - 70)) + 'px';
-box.style.top = Math.max(4, Math.min(innerHeight - 40 - els.length * 40, p.y - 20)) + 'px';
-document.documentElement.appendChild(box);
-setTimeout(() => document.addEventListener('pointerdown', closePile, { once: true, capture: true }), 0);
-}
-document.addEventListener('pointerdown', (e) => {
-clearTimeout(pileTimer);
-if (!enabled || !e.isTrusted || e.pointerType !== 'touch' || !st.tol || !mobileOn()) return;
-if (e.target && e.target.closest && e.target.closest('#mm-panel,#mm-pile,.mobile-controls')) return;
-const els = labels(); if (!els.length) return;
-const rects = els.map(rectOf), p = { x: e.clientX, y: e.clientY };
-pileStart = p;
-const near = L.labelsNear(p, rects);
-if (!near.length) return;
-const best = els[near[0]];
-if (near.length > 1) {                             // montón: mantener pulsado abre la lista con solo los que hay bajo el dedo
-const group = near.map(i => els[i]);
-pileTimer = setTimeout(() => openPile(p, group), 450);
-}
-if (e.target !== best && !best.contains(e.target)) {   // el dedo no cayó exactamente sobre la etiqueta más cercana: se le pasa el toque a ella
-e.stopPropagation(); e.preventDefault();
-synth(best, 'pointerdown', e.pointerId, { clientX: p.x, clientY: p.y });
-}
-}, true);
-const cancelPile = (e) => { if (e.isTrusted) clearTimeout(pileTimer); };
-document.addEventListener('pointerup', cancelPile, true);
-document.addEventListener('pointermove', (e) => { if (e.isTrusted && pileStart && Math.hypot(e.clientX - pileStart.x, e.clientY - pileStart.y) > 14) clearTimeout(pileTimer); }, true);      // deslizar el dedo cancela la lista
-bRep.addEventListener('click', (e) => { e.stopPropagation(); st.repeat = !st.repeat; save(); paint(); });
-bTol.addEventListener('click', (e) => { e.stopPropagation(); st.tol = !st.tol; save(); paint(); });
-[bRep, bTol].forEach(b => b.addEventListener('pointerdown', (e) => e.stopPropagation()));
-const sync = () => { const show = enabled && mobileOn(); panel.style.display = show ? 'flex' : 'none'; if (!show && altDown) setAlt(false); };
-let syncQueued = false;
-new MutationObserver(() => { if (syncQueued) return; syncQueued = true; requestAnimationFrame(() => { syncQueued = false; sync(); }); }).observe(document.documentElement, { childList: true, subtree: true });
-sync(); paint();
-const toggle = () => { enabled = !enabled; if (!enabled) { stopHold(); closePile(); } sync(); paint(); return enabled; };
-window.__mm = { st, setAlt, toggle, version: 2 };
+  'use strict';
+  if (window.__hudCircular) { if (window.__hudCircularToggle) window.__hudCircularToggle(); return; }   // marcador: ejecutarlo otra vez lo apaga/enciende
+  window.__hudCircular = true;
+  const CFG = {
+    ATTACK: 84,         // diámetro del ataque básico
+    POWER: 54,          // diámetro de cada poder
+    SMALL: 32,          // diámetro de PvP / Monstruos
+    UTIL: 44,           // diámetro de pociones y recoger
+    MARGIN: 14,
+    POWER_RADIUS: 118,  // anillo 1; los siguientes se alejan POWER+8 px
+    SMALL_RADIUS: 64,
+    ARC_FROM: 175, ARC_TO: 275,   // grados (180 = izquierda, 270 = arriba)
+    REPEAT_MS: 250,     // mismo ritmo que el botón de ataque oficial
+    LONGPRESS_MS: 470   // el cliente abre el selector de poderes a los 400 ms
+  };
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+  const KEY = 'portmu_hud_circular';
+  let on = true;
+  try { on = localStorage.getItem(KEY) !== 'off'; } catch (e) { /* sin almacenamiento */ }
+
+  const css = document.createElement('style');
+  css.textContent = `
+  body.hc-on .mobile-skill-pad, body.hc-on .mobile-skill-slots { display: contents !important; }
+  body.hc-on .mobile-potion-button, body.hc-on .mobile-pickup-button { position: fixed !important; margin: 0 !important; pointer-events: auto !important; z-index: 99980; }
+  body.hc-on .mobile-skill-slot, body.hc-on .mobile-attack-button { position: fixed !important; margin: 0 !important; pointer-events: auto !important; z-index: 99980; }
+  body.hc-on .mobile-skill-slot { border-radius: 50% !important; overflow: hidden !important; background: radial-gradient(#281e14e6,#000d) !important; border: 2px solid rgba(232,200,119,.6) !important; box-sizing: border-box !important; }
+  body.hc-on .mobile-skill-slot .mobile-scaled { width: 100% !important; height: 100% !important; }
+  body.hc-on .mobile-skill-slot .mobile-scaled > *:not(.mobile-skill-art):not(.mobile-skill-delay) { display: none !important; }
+  body.hc-on .mobile-skill-slot .mobile-skill-art { transform: translate(-50%,-50%) scale(1.25) !important; }
+  body.hc-on .mobile-skill-slot.hc-hide { display: none !important; }
+  body.hc-on .mobile-attack-button { border-width: 4px !important; }
+  body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: 44px !important; }
+  body.hc-on .mobile-pvp-button { opacity: 0 !important; pointer-events: none !important; position: fixed !important; width: 1px !important; height: 1px !important; left: 0 !important; top: 0 !important; }
+  body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
+  body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
+  .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
+    background: radial-gradient(#281e14e6,#000d); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; cursor: pointer; }
+  .hc-skill.press { transform: scale(.94); background: radial-gradient(#785a28cc,#1e140ad9); }
+  .hc-skill .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(1.25); pointer-events: none; }
+  .hc-skill b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font: 700 13px/1 'Segoe UI',sans-serif; pointer-events: none; }
+  #hc-panel { position: fixed; z-index: 99999; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(92vw, 560px); max-height: 86vh; overflow: auto; box-sizing: border-box; padding: 10px;
+    background: rgba(18,14,10,.96); border: 1px solid rgba(230,190,90,.7); border-radius: 10px; color: #fff; font: 13px/1.3 'Segoe UI',sans-serif; }
+  #hc-panel .hc-ptitle { color: #ffc832; font-weight: 700; margin-bottom: 8px; }
+  #hc-panel .hc-holes, #hc-panel .hc-pgrid, #hc-panel .hc-prow { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 6px 0; }
+  #hc-panel .hc-hole, #hc-panel .hc-pick { position: relative; width: 56px; height: 56px; border-radius: 50%; overflow: hidden; border: 2px solid rgba(232,200,119,.5); background: radial-gradient(#281e14e6,#000d); cursor: pointer; flex: none; }
+  #hc-panel .hc-hole.sel { border-color: #6fd36f; box-shadow: 0 0 8px #28ff4acc; }
+  #hc-panel .hc-pick.used { opacity: .45; }
+  #hc-panel .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(1.25); pointer-events: none; }
+  #hc-panel small { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font-size: 9px; line-height: 11px; background: #000a; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  #hc-panel b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font-size: 13px; pointer-events: none; }
+  #hc-panel button { all: unset; box-sizing: border-box; padding: 7px 12px; border-radius: 6px; background: #ffffff1a; color: #fff; cursor: pointer; }
+  #hc-panel .hc-pcur { color: #e8c877; margin: 4px 0; }
+  #hc-cfg { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: 15px; color: #e8c877;
+    background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
+  #hc-pvp, #hc-mon { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center;
+    background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); color: #e8c877; font: 700 10px/1 'Segoe UI',sans-serif;
+    box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
+  #hc-pvp.act { border-color: #ff3b2f; background: radial-gradient(#aa140ad9,#3c0000e6); color: #fff; box-shadow: 0 0 10px #ff2814cc; }
+  #hc-mon.act { border-color: #6fd36f; background: radial-gradient(#145a14d9,#001e00e6); color: #fff; box-shadow: 0 0 10px #28ff4acc; }
+  #hc-info { position: fixed; z-index: 99985; right: 8px; top: 4px; padding: 2px 8px; border-radius: 6px; background: #00000099; color: #ffc832;
+    font: 700 12px/16px 'Segoe UI',sans-serif; display: none; text-shadow: 0 0 3px #000; user-select: none; }
+  `;
+  document.documentElement.appendChild(css);
+
+  const mk = (id, html, title) => { const b = document.createElement('div'); b.id = id; b.innerHTML = html; b.title = title; document.documentElement.appendChild(b); return b; };
+  const bPvp = mk('hc-pvp', 'PvP', 'Atacar jugadores (fijar y atacar a un PJ)');
+  const bMon = mk('hc-mon', '👾', 'Solo monstruos');
+  const info = mk('hc-info', '', 'Toca para recargar la lista de poderes');
+  const bCfg = mk('hc-cfg', '⚙', 'Elegir poderes del HUD');
+
+  // ---- toques simulados sobre los botones originales ----
+  // El cliente llama a setPointerCapture con el id del puntero; con un id inventado lanza una excepción y la acción no se ejecuta.
+  function noCapture(fn) {
+    const P = Element.prototype, a = P.setPointerCapture, b = P.releasePointerCapture;
+    P.setPointerCapture = function () { }; P.releasePointerCapture = function () { };
+    try { fn(); } finally { P.setPointerCapture = a; P.releasePointerCapture = b; }
+  }
+  const pev = (el, t, id) => { const r = el.getBoundingClientRect(); return new PointerEvent(t, { bubbles: true, cancelable: true, composed: true, pointerId: id, pointerType: 'touch', isPrimary: true, button: 0, buttons: t === 'pointerup' ? 0 : 1, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }); };
+  const down = (el, id = 9101) => noCapture(() => el.dispatchEvent(pev(el, 'pointerdown', id)));
+  const up = (el, id = 9101) => noCapture(() => el.dispatchEvent(pev(el, 'pointerup', id)));
+  const tap = (el) => { if (!el) return; down(el); up(el); };
+
+  const mobileOn = () => !!$('.mobile-controls');
+  const pvpBtn = () => $('.mobile-pvp-button');
+  const pvpActive = () => !!$('.mobile-pvp-button.on');
+  const hasTarget = () => !!$('.mobile-target-label');
+
+  const swallow = (b, fn) => {
+    b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
+    b.addEventListener('click', (e) => { e.stopPropagation(); e.preventDefault(); });
+  };
+  swallow(bPvp, () => { if (!pvpActive()) tap(pvpBtn()); queue(); });   // encender PvP
+  swallow(bMon, () => { if (pvpActive()) tap(pvpBtn()); queue(); });    // apagarlo: solo monstruos
+
+  // ---- lanzar un poder (tocar la ranura original; si no hay objetivo, el botón de ataque oficial lo fija) ----
+  // needT: si es true y no hay objetivo, el botón de ataque oficial fija el más cercano antes de lanzar (los buffs/áreas sobre uno mismo no lo necesitan)
+  function fire(slot, needT) {
+    if (!slot || !document.contains(slot)) return;
+    if (needT && !pvpActive() && !hasTarget()) tap($('.mobile-attack-button'));
+    tap(slot);
+  }
+  // Mantener pulsado repite el poder. h = { pid, timer }; needT es una función (se lee en cada disparo)
+  function startHold(h, getSlot, el, needT = () => true) {
+    return async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      if (h.pid !== null) return;
+      h.pid = e.pointerId; if (el) el.classList.add('press');
+      try { (el || e.currentTarget).setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
+      const slot = await getSlot();
+      if (h.pid === null || !slot) return;   // lo soltó mientras se preparaba el poder
+      fire(slot, needT()); h.timer = setInterval(() => fire(slot, needT()), CFG.REPEAT_MS);
+    };
+  }
+  const endHold = (h, el) => (e) => {
+    if (h.pid === null || (e && e.pointerId !== undefined && e.pointerId !== h.pid)) return;
+    h.pid = null; clearInterval(h.timer); h.timer = null; if (el) el.classList.remove('press');
+  };
+
+  // ---- lista completa de poderes: se lee una vez del selector del cliente (invisible) ----
+  let skills = [], harvestOk = false, picking = false, lastLevel = '';
+  async function openPicker(slotEl) {
+    down(slotEl); await sleep(CFG.LONGPRESS_MS); up(slotEl);
+    for (let i = 0; i < 25; i++) { if ($('.mobile-picker-slot')) return true; await sleep(100); }
+    return false;
+  }
+  const closePicker = () => { const p = $('.mobile-skill-picker'); if (p) tap(p); };
+  async function harvest() {
+    if (picking) return;
+    const s0 = $('.mobile-skill-slot'); if (!s0) return;
+    picking = true; document.body.classList.add('hc-harvest');
+    try {
+      if (!(await openPicker(s0))) return;
+      const items = $$('.mobile-picker-slot').map(e => { const a = e.querySelector('.mobile-skill-art'); return { title: e.title || '', art: a ? a.cloneNode(true) : null }; }).filter(x => x.title);
+      closePicker(); await sleep(150);
+      if (items.length) { skills = items; harvestOk = true; builtKey = ''; autofill(); }
+    } catch (err) { console.warn('HUD circular: no se pudo leer la lista de poderes', err); }
+    finally { document.body.classList.remove('hc-harvest'); picking = false; queue(); }
+    if (harvestOk) preload();
+  }
+  // Pone un poder en la ranura real número idx mediante el selector (long press + elegir). Devuelve la ranura o null.
+  async function setSlot(idx, title) {
+    const slots = $$('.mobile-skill-slot'), target = slots[idx];
+    if (!target) return null;
+    const find = () => $$('.mobile-skill-slot').find(s => s.title === title);
+    if (target.title === title) return target;
+    if (!(await openPicker(target))) return null;
+    const it = $$('.mobile-picker-slot').find(e => e.title === title);
+    if (!it) { closePicker(); return null; }
+    tap(it); await sleep(200);
+    return find() || target;
+  }
+  // Devuelve la ranura del cliente que tiene ese poder; si ninguna lo tiene, lo asigna a la última ranura mediante el selector
+  async function slotForSkill(sk) {
+    const find = () => $$('.mobile-skill-slot').find(s => s.title === sk.title);
+    const s = find(); if (s) return s;
+    if (picking) return null;
+    picking = true; document.body.classList.add('hc-harvest');
+    try { return await setSlot($$('.mobile-skill-slot').length - 1, sk.title); }
+    finally { document.body.classList.remove('hc-harvest'); picking = false; }
+  }
+  // Deja cargados en las 3 ranuras reales los primeros poderes elegidos (Básico, 1, 2): esos se lanzan al instante; los demás usan la última ranura
+  async function preload() {
+    if (picking) return;
+    const c = cfg(), order = [c.basic, ...c.slots].filter(Boolean).filter(t => skills.some(s => s.title === t));
+    picking = true; document.body.classList.add('hc-harvest');
+    try { for (let i = 0; i < Math.min(order.length, $$('.mobile-skill-slot').length, 3); i++) await setSlot(i, order[i]); }
+    catch (err) { console.warn('HUD circular: precarga', err); }
+    finally { document.body.classList.remove('hc-harvest'); picking = false; }
+  }
+
+  // ---- configuración por personaje: qué poder va en el básico y en cada uno de los 4 círculos ----
+  const CK = 'portmu_hud_cfg';
+  let cfgAll = {}; try { cfgAll = JSON.parse(localStorage.getItem(CK) || '{}') || {}; } catch (e) { /* sin almacenamiento */ }
+  const charName = () => (($('.mobile-vitals-name') || {}).textContent || '').trim() || '_';
+  const cfg = () => { const n = charName(); return cfgAll[n] || (cfgAll[n] = { basic: null, slots: [null, null, null, null], tgt: {}, init: false }); };
+  const saveCfg = () => { try { localStorage.setItem(CK, JSON.stringify(cfgAll)); } catch (e) { /* nada */ } };
+  const wantsTarget = (title) => cfg().tgt[title] !== false;
+  function autofill() {   // primera vez: los 4 primeros poderes de la lista; el básico queda como ataque normal
+    const c = cfg(); if (c.init || charName() === '_') return;
+    c.init = true; c.slots = [0, 1, 2, 3].map(i => (skills[i] ? skills[i].title : null)); saveCfg();
+  }
+  const skillByTitle = (t) => skills.find(s => s.title === t);
+  const iconFor = (sk, into) => {
+    if (sk.art) into.appendChild(sk.art.cloneNode(true));
+    const hasArt = sk.art && (sk.art.children.length > 0 || sk.art.textContent.trim() || sk.art.style.backgroundImage);
+    if (!hasArt) { const t = document.createElement('b'); t.textContent = sk.title.replace(/[^A-Za-z0-9 ]/g, '').split(' ').map(w => w[0] || '').join('').slice(0, 3).toUpperCase(); into.appendChild(t); }
+  };
+
+  // ---- botones circulares de los poderes elegidos ----
+  let skillBtns = [], builtKey = '';
+  function buildSkillButtons() {
+    const chosen = cfg().slots.map(skillByTitle).filter(Boolean);
+    const key = chosen.map(s => s.title).join('|');
+    if (key === builtKey) return;
+    builtKey = key;
+    skillBtns.forEach(b => b.remove()); skillBtns = [];
+    chosen.forEach(sk => {
+      const b = document.createElement('div'); b.className = 'hc-skill'; b.title = sk.title;
+      iconFor(sk, b);
+      const h = { pid: null, timer: null };
+      b.addEventListener('pointerdown', startHold(h, () => slotForSkill(sk), b, () => wantsTarget(sk.title)));
+      ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => b.addEventListener(ev, endHold(h, b)));
+      b.addEventListener('contextmenu', e => e.preventDefault());
+      document.documentElement.appendChild(b); skillBtns.push(b);
+    });
+  }
+
+  // Toques reales: (1) botón de ataque grande con un poder asignado -> repite ese poder; (2) respaldo: ranuras originales si no se leyó la lista
+  const realHolds = new Map();
+  document.addEventListener('pointerdown', (e) => {
+    if (!on || !e.isTrusted || !document.body.classList.contains('hc-on')) return;
+    const t = e.target && e.target.closest ? e.target : null; if (!t) return;
+    const atk = t.closest('.mobile-attack-button');
+    if (atk) {
+      const sk = harvestOk && cfg().basic ? skillByTitle(cfg().basic) : null;
+      if (!sk) return;                                        // sin poder asignado: ataque básico normal del cliente
+      e.stopImmediatePropagation(); e.preventDefault();
+      const h = { pid: null, timer: null }; realHolds.set(e.pointerId, h);
+      startHold(h, () => slotForSkill(sk), null, () => wantsTarget(sk.title))(e);
+      return;
+    }
+    if (harvestOk) return;
+    const slot = t.closest('.mobile-skill-slot');
+    if (!slot || !$('.mobile-skill-art', slot)) return;   // ranura vacía: se deja abrir el selector
+    e.stopImmediatePropagation(); e.preventDefault();
+    const h = { pid: null, timer: null }; realHolds.set(e.pointerId, h);
+    startHold(h, async () => slot, slot)(e);
+  }, true);
+  ['pointerup', 'pointercancel'].forEach(ev => document.addEventListener(ev, (e) => {
+    const h = realHolds.get(e.pointerId); if (!h) return;
+    const slot = e.target && e.target.closest ? e.target.closest('.mobile-skill-slot') : null;
+    endHold(h, slot)(e); realHolds.delete(e.pointerId);
+  }, true));
+
+  // ---- panel ⚙: elegir el poder del básico y de cada círculo ----
+  let panel = null, selHole = 0;   // 0 = Básico, 1..4 = círculos
+  const holeTitle = (i) => (i === 0 ? cfg().basic : cfg().slots[i - 1]);
+  function closePanel() { if (panel) { panel.remove(); panel = null; } }
+  function assign(title) {
+    const c = cfg();
+    if (c.basic === title) c.basic = null;
+    c.slots = c.slots.map(t => (t === title ? null : t));
+    if (selHole === 0) c.basic = title; else c.slots[selHole - 1] = title;
+    saveCfg(); builtKey = ''; queue(); renderPanel(); preload();
+  }
+  function clearHole() { const c = cfg(); if (selHole === 0) c.basic = null; else c.slots[selHole - 1] = null; saveCfg(); builtKey = ''; queue(); renderPanel(); }
+  function renderPanel() {
+    if (!panel) return;
+    const c = cfg(); panel.innerHTML = '';
+    const mkEl = (tag, cls, txt) => { const e = document.createElement(tag); if (cls) e.className = cls; if (txt) e.textContent = txt; return e; };
+    panel.appendChild(mkEl('div', 'hc-ptitle', 'Poderes del HUD — ' + charName()));
+    const holes = mkEl('div', 'hc-holes');
+    for (let i = 0; i <= 4; i++) {
+      const hd = mkEl('div', 'hc-hole' + (i === selHole ? ' sel' : '')); const t = holeTitle(i), sk = t ? skillByTitle(t) : null;
+      if (sk) iconFor(sk, hd);
+      hd.appendChild(mkEl('small', '', i === 0 ? 'Básico' : String(i)));
+      hd.addEventListener('click', () => { selHole = i; renderPanel(); });
+      holes.appendChild(hd);
+    }
+    panel.appendChild(holes);
+    const cur = holeTitle(selHole);
+    panel.appendChild(mkEl('div', 'hc-pcur', cur ? cur : (selHole === 0 ? 'Sin poder: el botón grande es el ataque básico normal' : 'Vacío: elige un poder abajo')));
+    const row = mkEl('div', 'hc-prow');
+    if (cur) {
+      const lab = mkEl('label', '', ' Fijar objetivo antes de lanzar'); const cb = document.createElement('input'); cb.type = 'checkbox'; cb.checked = wantsTarget(cur);
+      cb.addEventListener('change', () => { c.tgt[cur] = cb.checked; saveCfg(); }); lab.prepend(cb); row.appendChild(lab);
+      const q = mkEl('button', '', 'Quitar'); q.addEventListener('click', clearHole); row.appendChild(q);
+    }
+    const x = mkEl('button', '', 'Cerrar'); x.addEventListener('click', closePanel); row.appendChild(x);
+    panel.appendChild(row);
+    const grid = mkEl('div', 'hc-pgrid');
+    skills.forEach(sk => {
+      const b = mkEl('div', 'hc-pick' + ((c.basic === sk.title || c.slots.includes(sk.title)) ? ' used' : '')); b.title = sk.title; iconFor(sk, b);
+      b.appendChild(mkEl('small', '', sk.title));
+      b.addEventListener('click', () => assign(sk.title)); grid.appendChild(b);
+    });
+    panel.appendChild(grid);
+  }
+  function openPanel() {
+    if (!harvestOk) { harvest(); return; }
+    closePanel(); panel = document.createElement('div'); panel.id = 'hc-panel';
+    panel.addEventListener('pointerdown', e => e.stopPropagation());
+    document.documentElement.appendChild(panel); renderPanel();
+  }
+  swallow(bCfg, openPanel);
+
+  // ---- disposición ----
+  const place =(el, cx, cy, d) => {
+    const x = Math.max(d / 2, Math.min(innerWidth - d / 2, cx)), y = Math.max(d / 2 + 24, Math.min(innerHeight - d / 2, cy));
+    el.style.width = d + 'px'; el.style.height = d + 'px'; el.style.left = Math.round(x - d / 2) + 'px'; el.style.top = Math.round(y - d / 2) + 'px'; el.style.right = 'auto'; el.style.bottom = 'auto';
+  };
+  const polar = (cx, cy, deg, r) => ({ x: cx + r * Math.cos(deg * Math.PI / 180), y: cy + r * Math.sin(deg * Math.PI / 180) });
+  // n posiciones en anillos concéntricos: cada anillo mete tantos botones como caben sin pisarse
+  function ringPositions(n, cx, cy) {
+    const out = []; let r = CFG.POWER_RADIUS, left = n;
+    while (left > 0 && r < 700) {
+      const minDeg = 2 * Math.asin(Math.min(1, (CFG.POWER + 6) / 2 / r)) * 180 / Math.PI;
+      const per = Math.max(1, Math.floor((CFG.ARC_TO - CFG.ARC_FROM) / minDeg) + 1), k = Math.min(per, left);
+      for (let i = 0; i < k; i++) out.push(polar(cx, cy, k > 1 ? CFG.ARC_FROM + (CFG.ARC_TO - CFG.ARC_FROM) * i / (k - 1) : (CFG.ARC_FROM + CFG.ARC_TO) / 2, r));
+      left -= k; r += CFG.POWER + 8;
+    }
+    return out;
+  }
+  const setCls = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
+
+  function layout() {
+    const show = on && mobileOn();
+    setCls(document.body, 'hc-on', show);
+    syncAlt();
+    const disp = show ? 'flex' : 'none';
+    if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
+    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
+    const atk = $('.mobile-attack-button'); if (atk) place(atk, cx, cy, CFG.ATTACK);
+
+    // pociones y recoger: en fila, abajo al centro de la pantalla (antes quedaban tapadas por el ataque)
+    const util = [...$$('.mobile-potion-button'), ...$$('.mobile-pickup-button')];
+    util.forEach((el, i) => place(el, innerWidth / 2 + (i - (util.length - 1) / 2) * (CFG.UTIL + 8), innerHeight - CFG.MARGIN - CFG.UTIL / 2, CFG.UTIL));
+
+    const lvl = (($('.mobile-vitals-level') || {}).textContent || '').trim();
+    if (lvl && lvl !== lastLevel) { const first = lastLevel === ''; lastLevel = lvl; setTimeout(harvest, first ? 2500 : 4000); }   // lee los poderes al entrar y al subir de nivel
+
+    const realSlots = $$('.mobile-skill-slot');
+    if (harvestOk && skills.length) {
+      buildSkillButtons();
+      realSlots.forEach(s => setCls(s, 'hc-hide', true));
+      ringPositions(skillBtns.length, cx, cy).forEach((p, i) => { const b = skillBtns[i]; place(b, p.x, p.y, CFG.POWER); if (b.style.display !== 'block') b.style.display = 'block'; });
+    } else {
+      // respaldo: ranuras originales, solo las equipadas (y un "+" para equipar si hay alguna vacía)
+      skillBtns.forEach(b => { b.style.display = 'none'; });
+      const full = realSlots.filter(s => $('.mobile-skill-art', s)), empty = realSlots.filter(s => !$('.mobile-skill-art', s));
+      const list = full.slice(); if (empty.length) list.push(empty[0]);
+      realSlots.forEach(s => setCls(s, 'hc-hide', !list.includes(s)));
+      const pos = ringPositions(list.length, cx, cy);
+      list.forEach((s, i) => place(s, pos[i].x, pos[i].y, empty.includes(s) ? CFG.POWER * 0.7 : CFG.POWER));
+    }
+    // PvP y Monstruos: entre el ataque básico y los poderes
+    const mid = (CFG.ARC_FROM + CFG.ARC_TO) / 2, sep = 24;
+    const pp = polar(cx, cy, mid - sep, CFG.SMALL_RADIUS), pm = polar(cx, cy, mid + sep, CFG.SMALL_RADIUS);
+    place(bPvp, pp.x, pp.y, CFG.SMALL); place(bMon, pm.x, pm.y, CFG.SMALL);
+    const pg = polar(cx, cy, 300, CFG.SMALL_RADIUS + 4); place(bCfg, pg.x, pg.y, CFG.SMALL);
+    const cd = harvestOk ? 'flex' : 'none'; if (bCfg.style.display !== cd) bCfg.style.display = cd;
+    const act = pvpActive(); setCls(bPvp, 'act', act); setCls(bMon, 'act', !act);
+    const pos = readPos();
+    const txt = [lvl, pos ? `(${pos[0]}, ${pos[1]})` : ''].filter(Boolean).join('  ');
+    if (info.textContent !== txt) info.textContent = txt;
+    info.style.display = txt ? 'block' : 'none';
+  }
+
+  // Coordenadas propias: el modo móvil no las muestra como texto; si algún elemento tipo minimapa/coordenadas las trae como "(x, y)", se leen
+  function readPos() {
+    const p = window.__hcPos;                          // de los paquetes del juego (wshook.js)
+    if (p && Date.now() - p.at < 600000) return [p.x, p.y];
+    const cand = $$('[class*="minimap"],[class*="coord"],[class*="position"],[class*="mapinfo"],[class*="map-info"]').filter(e => !e.closest('.party-coords,.party-meta,#hc-info'));
+    for (const e of cand) { const m = (e.textContent || '').match(/\(\s*(\d{1,3})\s*,\s*(\d{1,3})\s*\)/); if (m) return [Number(m[1]), Number(m[2])]; }
+    return null;
+  }
+
+  // ---- nombres de los ítems del suelo siempre visibles (como mantener Alt en PC) ----
+  let altDown = false;
+  const altEvent = (type) => new KeyboardEvent(type, { code: 'AltLeft', key: 'Alt', keyCode: 18, which: 18, altKey: type === 'keydown', bubbles: true, cancelable: true });
+  function setAlt(v) { if (v === altDown) return; altDown = v; document.dispatchEvent(altEvent(v ? 'keydown' : 'keyup')); }
+  function syncAlt() { const want = on && mobileOn(); if (want && !altDown) setAlt(true); else if (!want && altDown) setAlt(false); }
+  // si el navegador pierde el foco el juego suelta Alt: se vuelve a pulsar al volver
+  const reAlt = () => { if (altDown) { altDown = false; syncAlt(); } };
+  addEventListener('focus', reAlt); document.addEventListener('visibilitychange', () => { if (!document.hidden) reAlt(); });
+
+  // ---- carteles de ítems apilados: se separan en vertical para que ninguno tape a otro (p. ej. Zen sobre una joya) ----
+  function deoverlap() {
+    if (!on || !mobileOn()) return;
+    const els = $$('.world-objects .drop');
+    const items = els.map(e => { const r = e.getBoundingClientRect(), dy = Number(e.dataset.hcDy || 0); return { e, l: r.left, r: r.right, t: r.top - dy, b: r.bottom - dy, h: r.height, dy }; }).filter(o => o.h > 0);
+    items.sort((a, b) => a.t - b.t || a.l - b.l);
+    const placed = [];
+    for (const o of items) {
+      let dy = 0;
+      for (let guard = 0; guard < 30; guard++) {
+        let hit = null;
+        for (const p of placed) if (o.l < p.r - 1 && o.r > p.l + 1 && o.t + dy < p.b && o.b + dy > p.t) { hit = p; break; }
+        if (!hit) break;
+        dy = hit.b - o.t + 1;
+      }
+      placed.push({ l: o.l, r: o.r, t: o.t + dy, b: o.b + dy });
+      if (dy !== o.dy) { o.e.style.translate = dy ? `0px ${dy}px` : ''; o.e.dataset.hcDy = String(dy); }
+    }
+  }
+  setInterval(deoverlap, 120);
+
+  info.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); harvest(); });
+
+  let queued = false;
+  function queue() { if (queued) return; queued = true; requestAnimationFrame(() => { queued = false; try { layout(); } catch (e) { console.warn('HUD circular', e); } }); }
+  new MutationObserver(queue).observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
+  addEventListener('resize', queue); addEventListener('orientationchange', queue);
+  setInterval(queue, 700);
+
+  window.__hudCircularToggle = () => { on = !on; try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) { /* nada */ } queue(); return on; };
+  window.__hudCircularHarvest = harvest;
+  queue();
 })();
-}catch(e){alert("Ayuda móvil: "+e.message)}})();
+
+}catch(e){alert("HUD circular: "+e.message)}})();
