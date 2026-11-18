@@ -42,8 +42,9 @@
   body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: calc(44px * var(--hc-u,1)) !important; }
   body.hc-on .mobile-pvp-button { opacity: 0 !important; pointer-events: none !important; position: fixed !important; width: 1px !important; height: 1px !important; left: 0 !important; top: 0 !important; }
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
-  body.hc-under .hc-skill, body.hc-under #hc-pvp, body.hc-under #hc-mon, body.hc-under #hc-cfg, body.hc-under #hc-atkicon,
-  body.hc-on.hc-under .mobile-attack-button, body.hc-on.hc-under .mobile-skill-slot, body.hc-on.hc-under .mobile-potion-button, body.hc-on.hc-under .mobile-pickup-button { visibility: hidden !important; }
+  /* los botones del HUD cuelgan de <html>, no de <body>: la clase hc-under va en <html> */
+  html.hc-under .hc-skill, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-atkicon,
+  html.hc-under body.hc-on .mobile-attack-button, html.hc-under body.hc-on .mobile-skill-slot, html.hc-under body.hc-on .mobile-potion-button, html.hc-under body.hc-on .mobile-pickup-button { visibility: hidden !important; }
   body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
   .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
     background: radial-gradient(#281e14e6,#000d); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; cursor: pointer; }
@@ -347,11 +348,11 @@
     syncAlt();
     const disp = show ? 'flex' : 'none';
     if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
-    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.body, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.documentElement, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
     const U = unit(); for (const k in BASE) CFG[k] = BASE[k] * U;
     document.documentElement.style.setProperty('--hc-u', U.toFixed(3));
     const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
-    setCls(document.body, 'hc-under', windowOverHud(cx, cy));
+    setCls(document.documentElement, 'hc-under', windowOverHud(cx, cy));
     const atk = $('.mobile-attack-button'); if (atk) place(atk, cx, cy, CFG.ATTACK);
     // si el básico tiene un poder asignado, el botón grande muestra su icono
     const bs = harvestOk && cfg().basic ? skillByTitle(cfg().basic) : null;
