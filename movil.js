@@ -18,6 +18,9 @@
     REPEAT_MS: 250,     // mismo ritmo que el botón de ataque oficial
     LONGPRESS_MS: 470   // el cliente abre el selector de poderes a los 400 ms
   };
+  const BASE = { ATTACK: CFG.ATTACK, POWER: CFG.POWER, SMALL: CFG.SMALL, UTIL: CFG.UTIL, MARGIN: CFG.MARGIN, POWER_RADIUS: CFG.POWER_RADIUS, SMALL_RADIUS: CFG.SMALL_RADIUS };
+  // Factor de escala según la pantalla (el HUD móvil es horizontal: manda la altura, sin pasarse del ancho)
+  const unit = () => Math.max(0.72, Math.min(1.5, Math.min(innerHeight / 480, innerWidth / 900)));
   const $ = (s, r = document) => r.querySelector(s);
   const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
@@ -33,18 +36,18 @@
   body.hc-on .mobile-skill-slot { border-radius: 50% !important; overflow: hidden !important; background: radial-gradient(#281e14e6,#000d) !important; border: 2px solid rgba(232,200,119,.6) !important; box-sizing: border-box !important; }
   body.hc-on .mobile-skill-slot .mobile-scaled { width: 100% !important; height: 100% !important; }
   body.hc-on .mobile-skill-slot .mobile-scaled > *:not(.mobile-skill-art):not(.mobile-skill-delay) { display: none !important; }
-  body.hc-on .mobile-skill-slot .mobile-skill-art { transform: translate(-50%,-50%) scale(1.25) !important; }
+  body.hc-on .mobile-skill-slot .mobile-skill-art { transform: translate(-50%,-50%) scale(calc(1.25 * var(--hc-u,1))) !important; }
   body.hc-on .mobile-skill-slot.hc-hide { display: none !important; }
   body.hc-on .mobile-attack-button { border-width: 4px !important; }
-  body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: 44px !important; }
+  body.hc-on .mobile-attack-button .mobile-attack-glyph { font-size: calc(44px * var(--hc-u,1)) !important; }
   body.hc-on .mobile-pvp-button { opacity: 0 !important; pointer-events: none !important; position: fixed !important; width: 1px !important; height: 1px !important; left: 0 !important; top: 0 !important; }
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
   body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
   .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
     background: radial-gradient(#281e14e6,#000d); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; cursor: pointer; }
   .hc-skill.press { transform: scale(.94); background: radial-gradient(#785a28cc,#1e140ad9); }
-  .hc-skill .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(1.25); pointer-events: none; }
-  .hc-skill b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font: 700 13px/1 'Segoe UI',sans-serif; pointer-events: none; }
+  .hc-skill .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(calc(1.25 * var(--hc-u,1))); pointer-events: none; }
+  .hc-skill b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font: 700 calc(13px * var(--hc-u,1))/1 'Segoe UI',sans-serif; pointer-events: none; }
   #hc-panel { position: fixed; z-index: 99999; left: 50%; top: 50%; transform: translate(-50%,-50%); width: min(92vw, 560px); max-height: 86vh; overflow: auto; box-sizing: border-box; padding: 10px;
     background: rgba(18,14,10,.96); border: 1px solid rgba(230,190,90,.7); border-radius: 10px; color: #fff; font: 13px/1.3 'Segoe UI',sans-serif; }
   #hc-panel .hc-ptitle { color: #ffc832; font-weight: 700; margin-bottom: 8px; }
@@ -57,15 +60,18 @@
   #hc-panel b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font-size: 13px; pointer-events: none; }
   #hc-panel button { all: unset; box-sizing: border-box; padding: 7px 12px; border-radius: 6px; background: #ffffff1a; color: #fff; cursor: pointer; }
   #hc-panel .hc-pcur { color: #e8c877; margin: 4px 0; }
-  #hc-cfg { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: 15px; color: #e8c877;
+  #hc-cfg { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: calc(15px * var(--hc-u,1)); color: #e8c877;
     background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
   #hc-pvp, #hc-mon { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center;
-    background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); color: #e8c877; font: 700 10px/1 'Segoe UI',sans-serif;
+    background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); color: #e8c877; font: 700 calc(10px * var(--hc-u,1))/1 'Segoe UI',sans-serif;
     box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
   #hc-pvp.act { border-color: #ff3b2f; background: radial-gradient(#aa140ad9,#3c0000e6); color: #fff; box-shadow: 0 0 10px #ff2814cc; }
   #hc-mon.act { border-color: #6fd36f; background: radial-gradient(#145a14d9,#001e00e6); color: #fff; box-shadow: 0 0 10px #28ff4acc; }
-  #hc-info { position: fixed; z-index: 99985; right: 8px; top: 4px; padding: 2px 8px; border-radius: 6px; background: #00000099; color: #ffc832;
-    font: 700 12px/16px 'Segoe UI',sans-serif; display: none; text-shadow: 0 0 3px #000; user-select: none; }
+  #hc-info { position: fixed; z-index: 99985; padding: 0; color: #8fe3ff; font: 700 calc(11px * var(--hc-u,1))/1.2 'Segoe UI',sans-serif; display: none; text-shadow: 0 0 3px #000, 0 0 3px #000; user-select: none; pointer-events: none; white-space: nowrap; }
+  #hc-atkicon { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; pointer-events: none; }
+  #hc-atkicon .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(calc(1.7 * var(--hc-u,1))); }
+  #hc-atkicon b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font: 700 calc(20px * var(--hc-u,1))/1 'Segoe UI',sans-serif; }
+  body.hc-basicskill .mobile-attack-button .mobile-attack-glyph { opacity: 0 !important; }
   `;
   document.documentElement.appendChild(css);
 
@@ -74,6 +80,7 @@
   const bMon = mk('hc-mon', '👾', 'Solo monstruos');
   const info = mk('hc-info', '', 'Toca para recargar la lista de poderes');
   const bCfg = mk('hc-cfg', '⚙', 'Elegir poderes del HUD');
+  const atkIcon = mk('hc-atkicon', '', '');
 
   // ---- toques simulados sobre los botones originales ----
   // El cliente llama a setPointerCapture con el id del puntero; con un id inventado lanza una excepción y la acción no se ejecuta.
@@ -273,6 +280,7 @@
       cb.addEventListener('change', () => { c.tgt[cur] = cb.checked; saveCfg(); }); lab.prepend(cb); row.appendChild(lab);
       const q = mkEl('button', '', 'Quitar'); q.addEventListener('click', clearHole); row.appendChild(q);
     }
+    const rl = mkEl('button', '', 'Recargar poderes'); rl.addEventListener('click', () => { harvest(); }); row.appendChild(rl);
     const x = mkEl('button', '', 'Cerrar'); x.addEventListener('click', closePanel); row.appendChild(x);
     panel.appendChild(row);
     const grid = mkEl('div', 'hc-pgrid');
@@ -316,9 +324,19 @@
     syncAlt();
     const disp = show ? 'flex' : 'none';
     if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
-    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    const U = unit(); for (const k in BASE) CFG[k] = BASE[k] * U;
+    document.documentElement.style.setProperty('--hc-u', U.toFixed(3));
     const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
     const atk = $('.mobile-attack-button'); if (atk) place(atk, cx, cy, CFG.ATTACK);
+    // si el básico tiene un poder asignado, el botón grande muestra su icono
+    const bs = harvestOk && cfg().basic ? skillByTitle(cfg().basic) : null;
+    setCls(document.body, 'hc-basicskill', !!(bs && atk));
+    if (bs && atk) {
+      place(atkIcon, cx, cy, CFG.ATTACK - 8 * U);
+      if (atkIcon.dataset.t !== bs.title) { atkIcon.innerHTML = ''; iconFor(bs, atkIcon); atkIcon.dataset.t = bs.title; }
+      if (atkIcon.style.display !== 'block') atkIcon.style.display = 'block';
+    } else if (atkIcon.style.display !== 'none') { atkIcon.style.display = 'none'; atkIcon.dataset.t = ''; }
 
     // pociones y recoger: en fila, abajo al centro de la pantalla (antes quedaban tapadas por el ataque)
     const util = [...$$('.mobile-potion-button'), ...$$('.mobile-pickup-button')];
@@ -349,9 +367,16 @@
     const cd = harvestOk ? 'flex' : 'none'; if (bCfg.style.display !== cd) bCfg.style.display = cd;
     const act = pvpActive(); setCls(bPvp, 'act', act); setCls(bMon, 'act', !act);
     const pos = readPos();
-    const txt = [lvl, pos ? `(${pos[0]}, ${pos[1]})` : ''].filter(Boolean).join('  ');
-    if (info.textContent !== txt) info.textContent = txt;
-    info.style.display = txt ? 'block' : 'none';
+    // coordenadas: dentro del HUD de vitales, a la derecha del nombre del personaje
+    const nm = $('.mobile-vitals-name');
+    if (pos && nm) {
+      const txt = `(${pos[0]}, ${pos[1]})`;
+      if (info.textContent !== txt) info.textContent = txt;
+      info.style.display = 'block';
+      const r = nm.getBoundingClientRect(), vr = ($('.mobile-vitals') || nm).getBoundingClientRect();
+      const left = Math.min(r.right + 8 * U, vr.right - 4 - info.offsetWidth);
+      info.style.left = Math.round(Math.max(vr.left + 2, left)) + 'px'; info.style.top = Math.round(r.top + (r.height - info.offsetHeight) / 2) + 'px';
+    } else info.style.display = 'none';
   }
 
   // Coordenadas propias: el modo móvil no las muestra como texto; si algún elemento tipo minimapa/coordenadas las trae como "(x, y)", se leen
