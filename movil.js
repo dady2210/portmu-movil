@@ -320,21 +320,24 @@
   }
   const setCls = (el, c, v) => { if (el.classList.contains(c) !== v) el.classList.toggle(c, v); };
 
-  // Ventanas del juego (inventario, bóveda, tiendas, party...): si alguna cubre la zona del HUD, el HUD se esconde para no tapar la ventana
-  const WIN_SEL = '.window-title, .mp-window, .party-window, .guild-window, .quest-window, .skill-list-window, .event-window, .kanturu-window, .messenger-window, .chat-room-window, .pet-info-window, .mu-helper-window, .instrument-window, .session-window, .commands-window, .news-window, .gm-window, .options-window, .mobile-events-panel, .msg-window, .guild-dialog-layer, .quest-prompt-layer, .balgass-entry-layer, .duel-prompt-layer, .cash-confirm-layer, .player-market, .ranking-window';
-  const hits = (r, b) => r.right > b.l && r.left < b.r && r.bottom > b.t && r.top < b.b;
-  function windowOverHud(cx, cy) {
-    const reach = CFG.POWER_RADIUS + CFG.POWER * 1.5;
-    const boxes = [{ l: cx - reach, r: innerWidth, t: cy - reach, b: innerHeight }, { l: innerWidth / 2 - 2 * (CFG.UTIL + 8), r: innerWidth / 2 + 2 * (CFG.UTIL + 8), t: innerHeight - CFG.MARGIN - CFG.UTIL - 4, b: innerHeight }];
-    for (const e of $(WIN_SEL)) {
-      if (e.closest('#hc-panel,.mobile-skill-picker,.chat-window')) continue;
-      // el título (.window-title) es solo la barra de arriba: la ventana es su contenedor
-      const box = e.matches('.window-title') && e.parentElement ? e.parentElement : e;
-      const r = box.getBoundingClientRect(); if (r.width < 4 || r.height < 4) continue;
-      if (r.width > innerWidth * 0.9 && r.height > innerHeight * 0.9) continue;   // capa de pantalla completa, no una ventana
-      const st = getComputedStyle(box); if (st.visibility === 'hidden' || st.display === 'none') continue;
-      if (boxes.some(b => hits(r, b))) { window.__hcUnder = (box.className || box.tagName) + ' ' + Math.round(r.left) + ',' + Math.round(r.top) + ' ' + Math.round(r.width) + 'x' + Math.round(r.height); return true; }
+  // Ventanas del juego (inventario, bóveda, tiendas...): se mira qué hay REALMENTE bajo varios puntos del HUD. Si el elemento visible no es el mundo
+  // ni el propio HUD, es una ventana encima: el HUD se esconde para no taparla. Interruptor de emergencia: window.__hcNoUnder = true
+  const MINE = '.hc-skill,#hc-pvp,#hc-mon,#hc-cfg,#hc-atkicon,#hc-info,#hc-panel,.mobile-controls,.mobile-attack-button,.mobile-skill-slot,.mobile-potion-button,.mobile-pickup-button,.mobile-pvp-button';
+  function coveredAt(x, y) {
+    if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
+    for (const el of document.elementsFromPoint(x, y)) {
+      if (el.closest(MINE)) continue;
+      const tag = el.tagName; if (tag === 'HTML' || tag === 'BODY' || tag === 'CANVAS') return null;
+      if (el.closest('.world-objects,.chat-window,.hc-hide')) continue;
+      const r = el.getBoundingClientRect(); if (r.width >= innerWidth * 0.9 && r.height >= innerHeight * 0.9) continue;   // capa de pantalla completa
+      return el;
     }
+    return null;
+  }
+  function windowOverHud(cx, cy) {
+    if (window.__hcNoUnder) { window.__hcUnder = null; return false; }
+    const pts = [[cx, cy], [cx - CFG.POWER_RADIUS, cy], [cx, cy - CFG.POWER_RADIUS], [innerWidth / 2, innerHeight - CFG.MARGIN - CFG.UTIL / 2]];
+    for (const [x, y] of pts) { const el = coveredAt(Math.round(x), Math.round(y)); if (el) { window.__hcUnder = (el.className && el.className.toString ? el.className.toString() : el.tagName) + ' @' + Math.round(x) + ',' + Math.round(y); return true; } }
     window.__hcUnder = null; return false;
   }
 
