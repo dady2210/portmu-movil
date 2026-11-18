@@ -28,6 +28,73 @@
   let on = true;
   try { on = localStorage.getItem(KEY) !== 'off'; } catch (e) { /* sin almacenamiento */ }
 
+  // ---- lector de paquetes de respaldo (marcador): si wshook.js no estuvo desde el arranque, se engancha a send() del WebSocket ya abierto ----
+  // Posición propia: de las peticiones de caminar que envía el cliente (C1 D4 x y ... pasos). Monstruos: de los paquetes 13/14/17/10 que llegan desde ahora.
+  // Los que ya estaban a la vista antes de pulsar el marcador no se conocen: hasta que te alejes ~25 casillas solo se bloquea si se SABE que no hay monstruos cerca.
+  if (!window.__hcWsHook) (() => {
+    window.__hcWsHook = 'late';
+    const mobs = new Map(); let posOk = true, parsed = false, start = null, complete = false;
+    const DIRS = [[-1, -1], [0, -1], [1, -1], [1, 0], [1, 1], [0, 1], [-1, 1], [-1, 0]];
+    const isNpcType = (t) => (t >= 200 && t < 300) || (t >= 690 && t <= 699);
+    const setPos = (x, y) => {
+      const p = window.__hcPos;
+      if (p && Math.max(Math.abs(p.x - x), Math.abs(p.y - y)) > 40) { mobs.clear(); complete = true; }
+      if (!start) start = { x, y }; else if (!complete && Math.max(Math.abs(start.x - x), Math.abs(start.y - y)) > 25) complete = true;
+      window.__hcPos = { x, y, at: Date.now() }; posOk = true;
+    };
+    const eachPacket = (u8, fn) => {
+      let o = 0;
+      while (o + 3 <= u8.length) {
+        const h = u8[o]; if (h < 0xc1 || h > 0xc4) break;
+        const c12 = h === 0xc1 || h === 0xc3; let len, code;
+        if (c12) { len = u8[o + 1]; code = u8[o + 2]; } else { if (o + 4 > u8.length) break; len = (u8[o + 1] << 8) | u8[o + 2]; code = u8[o + 3]; }
+        if (len <= 0 || o + len > u8.length) len = u8.length - o;
+        fn(h, code, o, len); o += len;
+      }
+    };
+    const scanOut = (u8) => eachPacket(u8, (h, code, o, len) => {
+      if (h !== 0xc1 || code !== 0xd4 || len < 6) return;
+      let x = u8[o + 3], y = u8[o + 4]; const n = u8[o + 5] & 15;
+      for (let i = 0; i < n; i++) { const b = u8[o + 6 + (i >> 1)]; const d = DIRS[(i & 1) ? (b & 15) : (b >> 4)]; if (!d) break; x += d[0]; y += d[1]; }
+      setPos(x, y);
+    });
+    const scanIn = (u8) => eachPacket(u8, (h, code, o, len) => {
+      if (h === 0xc1 && code === 0x10 && len >= 7) { const m = mobs.get(((u8[o + 3] << 8) | u8[o + 4]) & 0x7fff); if (m) { m.x = u8[o + 5]; m.y = u8[o + 6]; } }
+      else if (h === 0xc1 && code === 0x14 && len >= 4) { for (let i = 0; i < u8[o + 3] && 4 + i * 2 + 1 < len; i++) mobs.delete(((u8[o + 4 + i * 2] << 8) | u8[o + 5 + i * 2]) & 0x7fff); }
+      else if (h === 0xc1 && code === 0x17 && len >= 5) mobs.delete(((u8[o + 3] << 8) | u8[o + 4]) & 0x7fff);
+      else if (h === 0xc2 && code === 0x13) {
+        const n = u8[o + 4], body = len - 5, sz = body === n * 12 ? 12 : (body === n * 10 ? 10 : 0); if (!n || !sz) return;
+        const pos = window.__hcPos; let far = 0, seen = 0;
+        for (let i = 0; i < n; i++) {
+          const b = o + 5 + i * sz, id = ((u8[b] << 8) | u8[b + 1]) & 0x7fff, type = sz === 12 ? (u8[b + 2] | (u8[b + 3] << 8)) : ((u8[b + 2] << 8) | u8[b + 3]);
+          const x = u8[b + (sz === 12 ? 6 : 4)], y = u8[b + (sz === 12 ? 7 : 5)]; parsed = true;
+          if (isNpcType(type)) continue; mobs.set(id, { x, y, type });
+          if (pos) { seen++; if (Math.max(Math.abs(pos.x - x), Math.abs(pos.y - y)) > 45) far++; }
+        }
+        if (seen && far === seen) posOk = false;
+      }
+    });
+    window.__hcNear = (range) => {
+      const p = window.__hcPos; if (!parsed || !p || !posOk) return null;
+      let best = Infinity; for (const m of mobs.values()) { const d = Math.hypot(m.x - p.x, m.y - p.y); if (d < best) best = d; }
+      if (!complete && best > (range || 8)) return null;   // lista aún incompleta: no se puede afirmar que no hay monstruos cerca
+      return { d: best, n: mobs.size };
+    };
+    const toU8 = (d, cb) => {
+      if (d instanceof ArrayBuffer) cb(new Uint8Array(d));
+      else if (ArrayBuffer.isView(d)) cb(new Uint8Array(d.buffer, d.byteOffset, d.byteLength));
+      else if (typeof Blob !== 'undefined' && d instanceof Blob) d.arrayBuffer().then(b => cb(new Uint8Array(b))).catch(() => { });
+    };
+    const origSend = WebSocket.prototype.send;
+    WebSocket.prototype.send = function (d) {
+      try {
+        if (!this.__hcSeen) { this.__hcSeen = true; this.addEventListener('message', ev => { try { toU8(ev.data, scanIn); } catch (e) { /* nunca afectar al juego */ } }); }
+        toU8(d, scanOut);
+      } catch (e) { /* nunca afectar al juego */ }
+      return origSend.apply(this, arguments);
+    };
+  })();
+
   const css = document.createElement('style');
   css.textContent = `
   body.hc-on .mobile-skill-pad, body.hc-on .mobile-skill-slots { display: contents !important; }
@@ -44,7 +111,7 @@
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
   body.hc-on .quick-command-window { transform: scale(calc(1.6 * var(--hc-u,1))) !important; transform-origin: 0 0 !important; }
   /* los botones del HUD cuelgan de <html>, no de <body>: la clase hc-under va en <html> */
-  html.hc-under .hc-skill, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-atkicon,
+  html.hc-under .hc-skill, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-eye, html.hc-under #hc-atkicon,
   html.hc-under body.hc-on .mobile-attack-button, html.hc-under body.hc-on .mobile-skill-slot, html.hc-under body.hc-on .mobile-potion-button, html.hc-under body.hc-on .mobile-pickup-button { visibility: hidden !important; }
   body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
   .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -64,8 +131,9 @@
   #hc-panel b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font-size: 13px; pointer-events: none; }
   #hc-panel button { all: unset; box-sizing: border-box; padding: 7px 12px; border-radius: 6px; background: #ffffff1a; color: #fff; cursor: pointer; }
   #hc-panel .hc-pcur { color: #e8c877; margin: 4px 0; }
-  #hc-cfg { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: calc(15px * var(--hc-u,1)); color: #e8c877;
+  #hc-cfg, #hc-eye { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: calc(15px * var(--hc-u,1)); color: #e8c877;
     background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
+  #hc-eye.act { border-color: #888; color: #888; }
   #hc-pvp, #hc-mon { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center;
     background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); color: #e8c877; font: 700 calc(10px * var(--hc-u,1))/1 'Segoe UI',sans-serif;
     box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
@@ -84,6 +152,7 @@
   const bMon = mk('hc-mon', '👾', 'Solo monstruos');
   const info = mk('hc-info', '', 'Toca para recargar la lista de poderes');
   const bCfg = mk('hc-cfg', '⚙', 'Elegir poderes del HUD');
+  const bEye = mk('hc-eye', '👁', 'Mostrar / ocultar los poderes');
   const atkIcon = mk('hc-atkicon', '', '');
 
   // ---- toques simulados sobre los botones originales ----
@@ -99,6 +168,17 @@
   const tap = (el) => { if (!el) return; down(el); up(el); };
 
   const mobileOn = () => !!$('.mobile-controls');
+  // ajustes globales: alcance máximo del objetivo automático (casillas; 0 = sin límite) y poderes ocultos
+  const SK = 'portmu_hud_set';
+  let setg = { range: 8, hide: false }; try { Object.assign(setg, JSON.parse(localStorage.getItem(SK) || '{}')); } catch (e) { /* sin almacenamiento */ }
+  const saveSet = () => { try { localStorage.setItem(SK, JSON.stringify(setg)); } catch (e) { /* nada */ } };
+  // true si se puede dejar que el botón de ataque oficial fije un objetivo: hay un monstruo a menos de "range" casillas.
+  // Si no se puede medir (marcador sin lector de paquetes, o aún sin posición) se deja al juego como siempre.
+  const nearOk = () => {
+    if (!setg.range || typeof window.__hcNear !== 'function') return true;
+    const n = window.__hcNear(setg.range); if (!n) return true;
+    return n.d <= setg.range;
+  };
   const pvpBtn = () => $('.mobile-pvp-button');
   const pvpActive = () => !!$('.mobile-pvp-button.on');
   const hasTarget = () => !!$('.mobile-target-label');
@@ -114,7 +194,7 @@
   // needT: si es true y no hay objetivo, el botón de ataque oficial fija el más cercano antes de lanzar (los buffs/áreas sobre uno mismo no lo necesitan)
   function fire(slot, needT) {
     if (!slot || !document.contains(slot)) return;
-    if (needT && !pvpActive() && !hasTarget()) tap($('.mobile-attack-button'));
+    if (needT && !pvpActive() && !hasTarget()) { if (!nearOk()) return; tap($('.mobile-attack-button')); }
     tap(slot);
   }
   // Mantener pulsado repite el poder. h = { pid, timer }; needT es una función (se lee en cada disparo)
@@ -231,7 +311,7 @@
     const atk = t.closest('.mobile-attack-button');
     if (atk) {
       const sk = harvestOk && cfg().basic ? skillByTitle(cfg().basic) : null;
-      if (!sk) return;                                        // sin poder asignado: ataque básico normal del cliente
+      if (!sk) { if (!pvpActive() && !hasTarget() && !nearOk()) { e.stopImmediatePropagation(); e.preventDefault(); } return; }   // sin poder asignado: ataque básico normal del cliente (salvo que no haya monstruos cerca)
       e.stopImmediatePropagation(); e.preventDefault();
       const h = { pid: null, timer: null }; realHolds.set(e.pointerId, h);
       startHold(h, () => slotForSkill(sk), null, () => wantsTarget(sk.title))(e);
@@ -284,6 +364,10 @@
       cb.addEventListener('change', () => { c.tgt[cur] = cb.checked; saveCfg(); }); lab.prepend(cb); row.appendChild(lab);
       const q = mkEl('button', '', 'Quitar'); q.addEventListener('click', clearHole); row.appendChild(q);
     }
+    const rg = mkEl('label', '', ' Alcance del objetivo automático: '); const sel = document.createElement('select');
+    [[5, '5 casillas'], [8, '8 casillas'], [11, '11 casillas'], [15, '15 casillas'], [0, 'sin límite']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; if (v === setg.range) o.selected = true; sel.appendChild(o); });
+    sel.addEventListener('change', () => { setg.range = Number(sel.value); saveSet(); });
+    rg.appendChild(sel); panel.appendChild(rg);
     const rl = mkEl('button', '', 'Recargar poderes'); rl.addEventListener('click', () => { harvest(); }); row.appendChild(rl);
     const x = mkEl('button', '', 'Cerrar'); x.addEventListener('click', closePanel); row.appendChild(x);
     panel.appendChild(row);
@@ -302,6 +386,7 @@
     document.documentElement.appendChild(panel); renderPanel();
   }
   swallow(bCfg, openPanel);
+  swallow(bEye, () => { setg.hide = !setg.hide; saveSet(); queue(); });
 
   // ---- disposición ----
   const place =(el, cx, cy, d) => {
@@ -324,7 +409,7 @@
 
   // Ventanas del juego (inventario, bóveda, tiendas...): se mira qué hay REALMENTE bajo varios puntos del HUD. Si el elemento visible no es el mundo
   // ni el propio HUD, es una ventana encima: el HUD se esconde para no taparla. Interruptor de emergencia: window.__hcNoUnder = true
-  const MINE = '.hc-skill,#hc-pvp,#hc-mon,#hc-cfg,#hc-atkicon,#hc-info,#hc-panel,.mobile-controls,.mobile-attack-button,.mobile-skill-slot,.mobile-potion-button,.mobile-pickup-button,.mobile-pvp-button';
+  const MINE = '.hc-skill,#hc-pvp,#hc-mon,#hc-cfg,#hc-eye,#hc-atkicon,#hc-info,#hc-panel,.mobile-controls,.mobile-attack-button,.mobile-skill-slot,.mobile-potion-button,.mobile-pickup-button,.mobile-pvp-button';
   function coveredAt(x, y) {
     if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
     for (const el of document.elementsFromPoint(x, y)) {
@@ -349,7 +434,7 @@
     syncAlt();
     const disp = show ? 'flex' : 'none';
     if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
-    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.documentElement, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; bEye.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.documentElement, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
     const U = unit(); for (const k in BASE) CFG[k] = BASE[k] * U;
     document.documentElement.style.setProperty('--hc-u', U.toFixed(3));
     const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
@@ -375,13 +460,13 @@
     if (harvestOk && skills.length) {
       buildSkillButtons();
       realSlots.forEach(s => setCls(s, 'hc-hide', true));
-      ringPositions(skillBtns.length, cx, cy).forEach((p, i) => { const b = skillBtns[i]; place(b, p.x, p.y, CFG.POWER); if (b.style.display !== 'block') b.style.display = 'block'; });
+      ringPositions(skillBtns.length, cx, cy).forEach((p, i) => { const b = skillBtns[i]; place(b, p.x, p.y, CFG.POWER); const d = setg.hide ? 'none' : 'block'; if (b.style.display !== d) b.style.display = d; });
     } else {
       // respaldo: ranuras originales, solo las equipadas (y un "+" para equipar si hay alguna vacía)
       skillBtns.forEach(b => { b.style.display = 'none'; });
       const full = realSlots.filter(s => $('.mobile-skill-art', s)), empty = realSlots.filter(s => !$('.mobile-skill-art', s));
       const list = full.slice(); if (empty.length) list.push(empty[0]);
-      realSlots.forEach(s => setCls(s, 'hc-hide', !list.includes(s)));
+      realSlots.forEach(s => setCls(s, 'hc-hide', setg.hide || !list.includes(s)));
       const pos = ringPositions(list.length, cx, cy);
       list.forEach((s, i) => place(s, pos[i].x, pos[i].y, empty.includes(s) ? CFG.POWER * 0.7 : CFG.POWER));
     }
@@ -391,6 +476,8 @@
     place(bPvp, pp.x, pp.y, CFG.SMALL); place(bMon, pm.x, pm.y, CFG.SMALL);
     const pg = polar(cx, cy, 300, CFG.SMALL_RADIUS + 4); place(bCfg, pg.x, pg.y, CFG.SMALL);
     const cd = harvestOk ? 'flex' : 'none'; if (bCfg.style.display !== cd) bCfg.style.display = cd;
+    const pe = polar(cx, cy, 300, CFG.SMALL_RADIUS + 4 + CFG.SMALL + 6); place(bEye, pe.x, pe.y, CFG.SMALL);
+    if (bEye.style.display !== 'flex') bEye.style.display = 'flex'; setCls(bEye, 'act', setg.hide);
     const act = pvpActive(); setCls(bPvp, 'act', act); setCls(bMon, 'act', !act);
     const pos = readPos();
     // coordenadas: dentro del HUD de vitales, a la derecha del nombre del personaje
