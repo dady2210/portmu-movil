@@ -76,7 +76,7 @@
     });
     window.__hcNear = (range) => {
       const p = window.__hcPos; if (!parsed || !p || !posOk) return null;
-      let best = Infinity; for (const m of mobs.values()) { const d = Math.hypot(m.x - p.x, m.y - p.y); if (d < best) best = d; }
+      let best = Infinity; for (const m of mobs.values()) { const d = Math.max(Math.abs(m.x - p.x), Math.abs(m.y - p.y)); if (d < best) best = d; }   // distancia en casillas como la mide el cliente (Chebyshev)
       if (!complete && best > (range || 8)) return null;   // lista aún incompleta: no se puede afirmar que no hay monstruos cerca
       return { d: best, n: mobs.size };
     };
@@ -126,6 +126,8 @@
   #hc-panel .hc-hole, #hc-panel .hc-pick { position: relative; width: 56px; height: 56px; border-radius: 50%; overflow: hidden; border: 2px solid rgba(232,200,119,.5); background: radial-gradient(#281e14e6,#000d); cursor: pointer; flex: none; }
   #hc-panel .hc-hole.sel { border-color: #6fd36f; box-shadow: 0 0 8px #28ff4acc; }
   #hc-panel .hc-pick.used { opacity: .45; }
+  .hc-vec { position: absolute; left: 14%; top: 10%; width: 72%; height: 80%; color: #f2dca0; pointer-events: none; filter: drop-shadow(0 0 2px #000); overflow: visible; }
+  #hc-atkicon .hc-vec { left: 18%; top: 14%; width: 64%; height: 72%; }
   #hc-panel .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(1.25); pointer-events: none; }
   #hc-panel small { position: absolute; left: 0; right: 0; bottom: 0; text-align: center; font-size: 9px; line-height: 11px; background: #000a; color: #fff; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   #hc-panel b { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #f2dca0; font-size: 13px; pointer-events: none; }
@@ -170,7 +172,7 @@
   const mobileOn = () => !!$('.mobile-controls');
   // ajustes globales: alcance máximo del objetivo automático (casillas; 0 = sin límite) y poderes ocultos
   const SK = 'portmu_hud_set';
-  let setg = { range: 8, hide: false }; try { Object.assign(setg, JSON.parse(localStorage.getItem(SK) || '{}')); } catch (e) { /* sin almacenamiento */ }
+  let setg = { range: 6, hide: false }; try { Object.assign(setg, JSON.parse(localStorage.getItem(SK) || '{}')); } catch (e) { /* sin almacenamiento */ }   // range 6 ≈ lo que cabe en pantalla; el juego oficial busca hasta 10 casillas aunque no se vean
   const saveSet = () => { try { localStorage.setItem(SK, JSON.stringify(setg)); } catch (e) { /* nada */ } };
   // true si se puede dejar que el botón de ataque oficial fije un objetivo: hay un monstruo a menos de "range" casillas.
   // Si no se puede medir (marcador sin lector de paquetes, o aún sin posición) se deja al juego como siempre.
@@ -205,8 +207,10 @@
       h.pid = e.pointerId; if (el) el.classList.add('press');
       try { (el || e.currentTarget).setPointerCapture(e.pointerId); } catch (err) { /* nada */ }
       const slot = await getSlot();
-      if (h.pid === null || !slot) return;   // lo soltó mientras se preparaba el poder
-      fire(slot, needT()); h.timer = setInterval(() => fire(slot, needT()), CFG.REPEAT_MS);
+      if (!slot) return;
+      fire(slot, needT());
+      if (h.pid === null) return;   // lo soltó mientras se preparaba el poder: un toque corto = un lanzamiento (antes se perdía)
+      h.timer = setInterval(() => fire(slot, needT()), CFG.REPEAT_MS);
     };
   }
   const endHold = (h, el) => (e) => {
@@ -278,7 +282,37 @@
     c.init = true; c.slots = [0, 1, 2, 3].map(i => (skills[i] ? skills[i].title : null)); saveCfg();
   }
   const skillByTitle = (t) => skills.find(s => s.title === t);
+  // ---- íconos vectoriales: iconos.js (extensión) o iconos.json (marcador: se baja una vez y queda en localStorage). Sin ellos se usa el arte del juego. ----
+  const ICONS_URL = 'https://dady2210.github.io/portmu-movil/iconos.json', ICK = 'portmu_hud_icons';
+  let ICONS = window.__hcIcons || null;
+  const ikey = (t) => String(t || '').replace(/\(.*?\)/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');   // 'Nova (Start)' usa el de Nova
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  function svgFor(sk) {
+    const v = ICONS && ICONS.i && ICONS.i[ikey(sk.title)]; if (!v) return null;
+    const own = v && !Array.isArray(v) && typeof v === 'object';      // ícono manual con viewBox propio: { vb, l: [[color, d], ...] }
+    const svg = document.createElementNS(SVGNS, 'svg'); svg.setAttribute('viewBox', own ? v.vb : ICONS.vb); svg.setAttribute('class', 'hc-vec'); svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    const layers = typeof v === 'string' ? [[null, v]] : own ? v.l : v;
+    for (const [col, d] of layers) { const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', col || 'currentColor'); p.setAttribute('fill-rule', 'evenodd'); svg.appendChild(p); }
+    return svg;
+  }
+  function iconsLoaded(doc) {
+    if (!doc || !doc.i || !doc.vb) return;
+    ICONS = doc; builtKey = ''; atkIcon.dataset.t = '';
+    try { queue(); if (panel && panel.isConnected) renderPanel(); } catch (e) { /* se repinta en el próximo ciclo */ }
+  }
+  if (!ICONS) {
+    try { const c = JSON.parse(localStorage.getItem(ICK) || 'null'); if (c && c.i && c.vb) ICONS = c; } catch (e) { /* sin copia guardada */ }
+    try {
+      fetch(ICONS_URL, { cache: 'no-cache' }).then(r => r.ok ? r.json() : null).then(d => {
+        if (!d || !d.i || !d.vb) return;
+        if (ICONS && ICONS.v === d.v && Object.keys(ICONS.i).length === Object.keys(d.i).length) return;
+        try { localStorage.setItem(ICK, JSON.stringify(d)); } catch (e) { /* sin almacenamiento */ }
+        iconsLoaded(d);
+      }).catch(() => { /* sin red: se queda con lo que haya */ });
+    } catch (e) { /* fetch no disponible */ }
+  }
   const iconFor = (sk, into) => {
+    const vec = svgFor(sk); if (vec) { into.appendChild(vec); return; }
     if (sk.art) into.appendChild(sk.art.cloneNode(true));
     const hasArt = sk.art && (sk.art.children.length > 0 || sk.art.textContent.trim() || sk.art.style.backgroundImage);
     if (!hasArt) { const t = document.createElement('b'); t.textContent = sk.title.replace(/[^A-Za-z0-9 ]/g, '').split(' ').map(w => w[0] || '').join('').slice(0, 3).toUpperCase(); into.appendChild(t); }
@@ -365,9 +399,10 @@
       const q = mkEl('button', '', 'Quitar'); q.addEventListener('click', clearHole); row.appendChild(q);
     }
     const rg = mkEl('label', '', ' Alcance del objetivo automático: '); const sel = document.createElement('select');
-    [[5, '5 casillas'], [8, '8 casillas'], [11, '11 casillas'], [15, '15 casillas'], [0, 'sin límite']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; if (v === setg.range) o.selected = true; sel.appendChild(o); });
+    [[3, '3 casillas'], [5, '5 casillas'], [6, '6 casillas'], [8, '8 casillas'], [10, '10 casillas (como el juego)'], [0, 'sin límite']].forEach(([v, t]) => { const o = document.createElement('option'); o.value = String(v); o.textContent = t; if (v === setg.range) o.selected = true; sel.appendChild(o); });
     sel.addEventListener('change', () => { setg.range = Number(sel.value); saveSet(); });
     rg.appendChild(sel); panel.appendChild(rg);
+    const note = mkEl('div', 'hc-pcur', 'Nota: al fijar objetivo el juego ataca solo (básico entre poderes) y persigue al monstruo hasta que muera. 👁 oculta los círculos.'); note.style.fontSize = '11px'; panel.appendChild(note);
     const rl = mkEl('button', '', 'Recargar poderes'); rl.addEventListener('click', () => { harvest(); }); row.appendChild(rl);
     const x = mkEl('button', '', 'Cerrar'); x.addEventListener('click', closePanel); row.appendChild(x);
     panel.appendChild(row);
