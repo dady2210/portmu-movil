@@ -303,7 +303,7 @@
     const own = v && !Array.isArray(v) && typeof v === 'object';      // ícono manual con viewBox propio: { vb, l: [[color, d], ...] }
     const svg = document.createElementNS(SVGNS, 'svg'); svg.setAttribute('viewBox', own ? v.vb : ICONS.vb); svg.setAttribute('class', 'hc-vec'); svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     const layers = typeof v === 'string' ? [[null, v]] : own ? v.l : v;
-    for (const [col, d] of layers) { const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', col || 'currentColor'); p.setAttribute('fill-rule', 'evenodd'); svg.appendChild(p); }
+    for (const [col, d, op] of layers) { const p = document.createElementNS(SVGNS, 'path'); p.setAttribute('d', d); p.setAttribute('fill', col || 'currentColor'); p.setAttribute('fill-rule', 'evenodd'); if (op > 0 && op < 1) p.setAttribute('fill-opacity', String(op)); svg.appendChild(p); }   // op: capas translúcidas = sombreado
     return svg;
   }
   function iconsLoaded(doc) {
