@@ -220,6 +220,7 @@
 
   // ---- lista completa de poderes: se lee una vez del selector del cliente (invisible) ----
   let skills = [], harvestOk = false, picking = false, lastLevel = '';
+  let tries = 0, lastTry = 0, why = '';   // reintentos automáticos de la lectura de poderes y por qué falló la última
   async function openPicker(slotEl) {
     down(slotEl); await sleep(CFG.LONGPRESS_MS); up(slotEl);
     for (let i = 0; i < 25; i++) { if ($('.mobile-picker-slot')) return true; await sleep(100); }
@@ -228,14 +229,15 @@
   const closePicker = () => { const p = $('.mobile-skill-picker'); if (p) tap(p); };
   async function harvest() {
     if (picking) return;
-    const s0 = $('.mobile-skill-slot'); if (!s0) return;
+    lastTry = Date.now();
+    const s0 = $('.mobile-skill-slot'); if (!s0) { why = 'no hay ranuras de poder en la pantalla'; return; }
     picking = true; document.body.classList.add('hc-harvest');
     try {
-      if (!(await openPicker(s0))) return;
+      if (!(await openPicker(s0))) { why = 'el selector de poderes no se abrió'; return; }
       const items = $$('.mobile-picker-slot').map(e => { const a = e.querySelector('.mobile-skill-art'); return { title: e.title || '', art: a ? a.cloneNode(true) : null }; }).filter(x => x.title);
       closePicker(); await sleep(150);
-      if (items.length) { skills = items; harvestOk = true; builtKey = ''; autofill(); }
-    } catch (err) { console.warn('HUD circular: no se pudo leer la lista de poderes', err); }
+      if (items.length) { skills = items; harvestOk = true; why = ''; builtKey = ''; autofill(); } else why = 'el selector no trajo poderes';
+    } catch (err) { why = String(err && err.message || err); console.warn('HUD circular: no se pudo leer la lista de poderes', err); }
     finally { document.body.classList.remove('hc-harvest'); picking = false; queue(); }
     if (harvestOk) preload();
   }
@@ -415,7 +417,7 @@
     panel.appendChild(grid);
   }
   function openPanel() {
-    if (!harvestOk) { harvest(); return; }
+    if (!harvestOk) { tries = 0; harvest(); return; }
     closePanel(); panel = document.createElement('div'); panel.id = 'hc-panel';
     panel.addEventListener('pointerdown', e => e.stopPropagation());
     document.documentElement.appendChild(panel); renderPanel();
@@ -488,8 +490,10 @@
     const util = [...$$('.mobile-potion-button'), ...$$('.mobile-pickup-button')];
     util.forEach((el, i) => place(el, innerWidth / 2 + (i - (util.length - 1) / 2) * (CFG.UTIL + 8), innerHeight - CFG.MARGIN - CFG.UTIL / 2, CFG.UTIL));
 
+    // si la lectura de poderes falló (p. ej. el selector tardó en abrir), se reintenta sola cada 4 s, hasta 8 veces
+    if (!harvestOk && !picking && lastLevel && tries < 8 && Date.now() - lastTry > 4000 && $('.mobile-skill-slot')) { tries++; harvest(); }
     const lvl = (($('.mobile-vitals-level') || {}).textContent || '').trim();
-    if (lvl && lvl !== lastLevel) { const first = lastLevel === ''; lastLevel = lvl; setTimeout(harvest, first ? 2500 : 4000); }   // lee los poderes al entrar y al subir de nivel
+    if (lvl && lvl !== lastLevel) { const first = lastLevel === ''; lastLevel = lvl; lastTry = Date.now(); setTimeout(harvest, first ? 2500 : 4000); }   // lee los poderes al entrar y al subir de nivel
 
     const realSlots = $$('.mobile-skill-slot');
     if (harvestOk && skills.length) {
@@ -510,7 +514,7 @@
     const pp = polar(cx, cy, mid - sep, CFG.SMALL_RADIUS), pm = polar(cx, cy, mid + sep, CFG.SMALL_RADIUS);
     place(bPvp, pp.x, pp.y, CFG.SMALL); place(bMon, pm.x, pm.y, CFG.SMALL);
     const pg = polar(cx, cy, 300, CFG.SMALL_RADIUS + 4); place(bCfg, pg.x, pg.y, CFG.SMALL);
-    const cd = harvestOk ? 'flex' : 'none'; if (bCfg.style.display !== cd) bCfg.style.display = cd;
+    if (bCfg.style.display !== 'flex') bCfg.style.display = 'flex';   // siempre visible: sin poderes leídos, tocarlo los vuelve a leer
     const pe = polar(cx, cy, 300, CFG.SMALL_RADIUS + 4 + CFG.SMALL + 6); place(bEye, pe.x, pe.y, CFG.SMALL);
     if (bEye.style.display !== 'flex') bEye.style.display = 'flex'; setCls(bEye, 'act', setg.hide);
     const act = pvpActive(); setCls(bPvp, 'act', act); setCls(bMon, 'act', !act);
@@ -612,6 +616,7 @@
 
   window.__hudCircularToggle = () => { on = !on; try { localStorage.setItem(KEY, on ? 'on' : 'off'); } catch (e) { /* nada */ } queue(); return on; };
   window.__hudCircularHarvest = harvest;
+  window.__hudCircularState = () => ({ harvestOk, poderes: skills.length, reintentos: tries, motivo: why, ocultos: setg.hide, nivel: lastLevel, ranuras: $$('.mobile-skill-slot').length });
   queue();
 })();
 
