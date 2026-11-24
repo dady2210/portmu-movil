@@ -1,5 +1,5 @@
 (function(){try{
-// HUD circular del modo móvil (v0.2). Se ejecuta en el mundo de la página (MAIN) para poder tocar los botones del cliente como lo haría un dedo.
+// HUD circular del modo móvil (v0.3: igual que el HUD móvil del cliente oficial de mu-web). Se ejecuta en el mundo de la página (MAIN) para poder tocar los botones del cliente como lo haría un dedo.
 // No inventa acciones: el ataque básico es el botón ORIGINAL movido de sitio; cada poder es un botón circular que, al tocarlo o mantenerlo,
 // "toca" la ranura original del cliente (que aplica cooldown, maná y alcance); PvP/Monstruos tocan el botón PvP original.
 (function () {
@@ -111,8 +111,10 @@
   body.hc-harvest .mobile-skill-picker { opacity: 0 !important; }
   body.hc-on .quick-command-window { transform: scale(calc(1.6 * var(--hc-u,1))) !important; transform-origin: 0 0 !important; }
   /* los botones del HUD cuelgan de <html>, no de <body>: la clase hc-under va en <html> */
-  html.hc-under .hc-skill, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-eye, html.hc-under #hc-atkicon,
+  html.hc-under .hc-skill, html.hc-under #hc-loot, html.hc-under #hc-pvp, html.hc-under #hc-mon, html.hc-under #hc-cfg, html.hc-under #hc-eye, html.hc-under #hc-atkicon,
   html.hc-under body.hc-on .mobile-attack-button, html.hc-under body.hc-on .mobile-skill-slot, html.hc-under body.hc-on .mobile-potion-button, html.hc-under body.hc-on .mobile-pickup-button { visibility: hidden !important; }
+  body.hc-on .world-objects .drop .text { position: relative; }
+  body.hc-on .world-objects .drop .text::after { content: ''; position: absolute; inset: -6px; }   /* zona de toque extra: un dedo no es un cursor */
   body.hc-on .world-objects .drop { font-size: 13px !important; padding: 3px 6px !important; text-shadow: 0 0 3px #000, 0 0 3px #000; border-radius: 3px; background: rgba(0,0,0,.35); }
   .hc-skill { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; touch-action: none; user-select: none; -webkit-user-select: none;
     background: radial-gradient(#281e14e6,#000d); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; cursor: pointer; }
@@ -141,6 +143,9 @@
     box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; }
   #hc-pvp.act { border-color: #ff3b2f; background: radial-gradient(#aa140ad9,#3c0000e6); color: #fff; box-shadow: 0 0 10px #ff2814cc; }
   #hc-mon.act { border-color: #6fd36f; background: radial-gradient(#145a14d9,#001e00e6); color: #fff; box-shadow: 0 0 10px #28ff4acc; }
+  #hc-loot { position: fixed; z-index: 99985; box-sizing: border-box; border-radius: 50%; display: none; align-items: center; justify-content: center; font-size: calc(18px * var(--hc-u,1));
+    background: radial-gradient(#281e14b3,#000c); border: 2px solid rgba(232,200,119,.6); box-shadow: 0 0 6px #000b; user-select: none; touch-action: none; cursor: pointer; opacity: .6; }
+  #hc-loot.act { opacity: 1; border-color: #6fd36f; box-shadow: 0 0 10px #28ff4acc; }
   #hc-info { position: fixed; z-index: 99985; padding: 0; color: #8fe3ff; font: 700 calc(11px * var(--hc-u,1))/1.2 'Segoe UI',sans-serif; display: none; text-shadow: 0 0 3px #000, 0 0 3px #000; user-select: none; pointer-events: none; white-space: nowrap; }
   #hc-atkicon { position: fixed; z-index: 99981; box-sizing: border-box; border-radius: 50%; overflow: hidden; display: none; pointer-events: none; }
   #hc-atkicon .mobile-skill-art { position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%) scale(calc(1.7 * var(--hc-u,1))); }
@@ -155,6 +160,7 @@
   const info = mk('hc-info', '', 'Toca para recargar la lista de poderes');
   const bCfg = mk('hc-cfg', '⚙', 'Elegir poderes del HUD');
   const bEye = mk('hc-eye', '👁', 'Mostrar / ocultar los poderes');
+  const bLoot = mk('hc-loot', '💰', 'Mostrar / ocultar los nombres del botín (como Alt en PC)');
   const atkIcon = mk('hc-atkicon', '', '');
 
   // ---- toques simulados sobre los botones originales ----
@@ -172,7 +178,7 @@
   const mobileOn = () => !!$('.mobile-controls');
   // ajustes globales: alcance máximo del objetivo automático (casillas; 0 = sin límite) y poderes ocultos
   const SK = 'portmu_hud_set';
-  let setg = { range: 6, hide: false }; try { Object.assign(setg, JSON.parse(localStorage.getItem(SK) || '{}')); } catch (e) { /* sin almacenamiento */ }   // range 6 ≈ lo que cabe en pantalla; el juego oficial busca hasta 10 casillas aunque no se vean
+  let setg = { range: 6, hide: false, loot: true }; try { Object.assign(setg, JSON.parse(localStorage.getItem(SK) || '{}')); } catch (e) { /* sin almacenamiento */ }   // range 6 ≈ lo que cabe en pantalla; el juego oficial busca hasta 10 casillas aunque no se vean
   const saveSet = () => { try { localStorage.setItem(SK, JSON.stringify(setg)); } catch (e) { /* nada */ } };
   // true si se puede dejar que el botón de ataque oficial fije un objetivo: hay un monstruo a menos de "range" casillas.
   // Si no se puede medir (marcador sin lector de paquetes, o aún sin posición) se deja al juego como siempre.
@@ -278,7 +284,10 @@
   const charName = () => (($('.mobile-vitals-name') || {}).textContent || '').trim() || '_';
   const cfg = () => { const n = charName(); return cfgAll[n] || (cfgAll[n] = { basic: null, slots: [null, null, null, null], tgt: {}, init: false }); };
   const saveCfg = () => { try { localStorage.setItem(CK, JSON.stringify(cfgAll)); } catch (e) { /* nada */ } };
-  const wantsTarget = (title) => cfg().tgt[title] !== false;
+  // Igual que el cliente oficial (combat/castTargets): solo los poderes que van contra un enemigo fijan objetivo; los buffs, las invocaciones y los
+  // poderes sobre uno mismo no (fijar uno hace que el personaje ataque y persiga). Lo que se marque a mano en el panel manda.
+  const NO_TARGET = new Set(["berserker", "damagereflection", "defense", "expansionofwizardry", "greaterdamage", "greaterdefense", "heal", "ignoredefense", "increaseblock", "increasecriticaldamage", "increasehealth", "infinityarrow", "innovation", "recovery", "soulbarrier", "summonassassin", "summonbali", "summondarkknight", "summoneliteyeti", "summongoblin", "summonsoldier", "summonstonegolem", "swelllife", "teleport", "teleportally", "weakness"]);
+  const wantsTarget = (title) => { const v = cfg().tgt[title]; return v === undefined ? !NO_TARGET.has(ikey(title)) : v !== false; };
   function autofill() {   // primera vez: los 4 primeros poderes de la lista; el básico queda como ataque normal
     const c = cfg(); if (c.init || charName() === '_') return;
     c.init = true; c.slots = [0, 1, 2, 3].map(i => (skills[i] ? skills[i].title : null)); saveCfg();
@@ -424,6 +433,7 @@
   }
   swallow(bCfg, openPanel);
   swallow(bEye, () => { setg.hide = !setg.hide; saveSet(); queue(); });
+  swallow(bLoot, () => { setg.loot = !setg.loot; saveSet(); queue(); });
 
   // ---- disposición ----
   const place =(el, cx, cy, d) => {
@@ -446,7 +456,7 @@
 
   // Ventanas del juego (inventario, bóveda, tiendas...): se mira qué hay REALMENTE bajo varios puntos del HUD. Si el elemento visible no es el mundo
   // ni el propio HUD, es una ventana encima: el HUD se esconde para no taparla. Interruptor de emergencia: window.__hcNoUnder = true
-  const MINE = '.hc-skill,#hc-pvp,#hc-mon,#hc-cfg,#hc-eye,#hc-atkicon,#hc-info,#hc-panel,.mobile-controls,.mobile-attack-button,.mobile-skill-slot,.mobile-potion-button,.mobile-pickup-button,.mobile-pvp-button';
+  const MINE = '.hc-skill,#hc-loot,#hc-pvp,#hc-mon,#hc-cfg,#hc-eye,#hc-atkicon,#hc-info,#hc-panel,.mobile-controls,.mobile-attack-button,.mobile-skill-slot,.mobile-potion-button,.mobile-pickup-button,.mobile-pvp-button';
   function coveredAt(x, y) {
     if (x < 0 || y < 0 || x >= innerWidth || y >= innerHeight) return null;
     for (const el of document.elementsFromPoint(x, y)) {
@@ -471,7 +481,7 @@
     syncAlt();
     const disp = show ? 'flex' : 'none';
     if (bPvp.style.display !== disp) { bPvp.style.display = disp; bMon.style.display = disp; }
-    if (!show) { info.style.display = 'none'; bCfg.style.display = 'none'; bEye.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.documentElement, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
+    if (!show) { info.style.display = 'none'; bLoot.style.display = 'none'; bCfg.style.display = 'none'; bEye.style.display = 'none'; atkIcon.style.display = 'none'; setCls(document.body, 'hc-basicskill', false); setCls(document.documentElement, 'hc-under', false); skillBtns.forEach(b => { b.style.display = 'none'; }); return; }
     const U = unit(); for (const k in BASE) CFG[k] = BASE[k] * U;
     document.documentElement.style.setProperty('--hc-u', U.toFixed(3));
     const cx = innerWidth - CFG.MARGIN - CFG.ATTACK / 2 - 8, cy = innerHeight - CFG.MARGIN - CFG.ATTACK / 2 - 8;
@@ -487,8 +497,9 @@
     } else if (atkIcon.style.display !== 'none') { atkIcon.style.display = 'none'; atkIcon.dataset.t = ''; }
 
     // pociones y recoger: en fila, abajo al centro de la pantalla (antes quedaban tapadas por el ataque)
-    const util = [...$$('.mobile-potion-button'), ...$$('.mobile-pickup-button')];
+    const util = [...$$('.mobile-potion-button'), ...$$('.mobile-pickup-button'), bLoot];
     util.forEach((el, i) => place(el, innerWidth / 2 + (i - (util.length - 1) / 2) * (CFG.UTIL + 8), innerHeight - CFG.MARGIN - CFG.UTIL / 2, CFG.UTIL));
+    if (bLoot.style.display !== 'flex') bLoot.style.display = 'flex'; setCls(bLoot, 'act', !!setg.loot);
 
     // si la lectura de poderes falló (p. ej. el selector tardó en abrir), se reintenta sola cada 4 s, hasta 8 veces
     if (!harvestOk && !picking && lastLevel && tries < 8 && Date.now() - lastTry > 4000 && $('.mobile-skill-slot')) { tries++; harvest(); }
@@ -521,8 +532,8 @@
     const pos = readPos();
     // coordenadas: dentro del HUD de vitales, a la derecha del nombre del personaje
     const nm = $('.mobile-vitals-name');
-    if (pos && nm) {
-      const txt = `(${pos[0]}, ${pos[1]})`;
+    if (nm) {
+      const txt = pos ? `(${pos[0]}, ${pos[1]})` : '(?, ?)';   // sin marcador la posición se aprende al dar el primer paso
       if (info.textContent !== txt) info.textContent = txt;
       info.style.display = 'block';
       const r = nm.getBoundingClientRect(), vr = ($('.mobile-vitals') || nm).getBoundingClientRect();
@@ -543,8 +554,12 @@
   // ---- nombres de los ítems del suelo siempre visibles (como mantener Alt en PC) ----
   let altDown = false;
   const altEvent = (type) => new KeyboardEvent(type, { code: 'AltLeft', key: 'Alt', keyCode: 18, which: 18, altKey: type === 'keydown', bubbles: true, cancelable: true });
-  function setAlt(v) { if (v === altDown) return; altDown = v; document.dispatchEvent(altEvent(v ? 'keydown' : 'keyup')); }
-  function syncAlt() { const want = on && mobileOn(); if (want && !altDown) setAlt(true); else if (!want && altDown) setAlt(false); }
+  // El cliente alterna los nombres en CADA pulsación de Alt (y los muestra todos mientras se mantiene). `latch` modela ese interruptor
+  // para poder apagarlo del todo: soltar Alt no basta si quedó encendido.
+  let latch = false;
+  function setAlt(v) { if (v === altDown) return; altDown = v; if (v) latch = !latch; document.dispatchEvent(altEvent(v ? 'keydown' : 'keyup')); }
+  function lootOff() { setAlt(false); if (latch) { setAlt(true); setAlt(false); } }
+  function syncAlt() { const want = on && mobileOn() && setg.loot !== false; if (want && !altDown) setAlt(true); else if (!want && altDown) lootOff(); else if (!want && latch && !altDown) lootOff(); }
   // si el navegador pierde el foco el juego suelta Alt: se vuelve a pulsar al volver
   const reAlt = () => { if (altDown) { altDown = false; syncAlt(); } };
   addEventListener('focus', reAlt); document.addEventListener('visibilitychange', () => { if (!document.hidden) reAlt(); });
